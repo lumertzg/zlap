@@ -602,18 +602,14 @@ pub fn Variants(comptime U: type) type {
     }
 
     const variant_default: Variant = .{};
-    const variant_count = type_info.@"union".fields.len;
+    const variant_count = type_info.@"union".field_names.len;
     const variant_types: [variant_count]type = @splat(Variant);
-    const variant_attributes: [variant_count]std.builtin.Type.StructField.Attributes = @splat(.{
+    const variant_attributes: [variant_count]std.lang.Type.Struct.FieldAttributes = @splat(.{
         .@"comptime" = false,
         .@"align" = null,
         .default_value_ptr = &variant_default,
     });
-    comptime var variant_names: [variant_count][]const u8 = undefined;
-    inline for (type_info.@"union".fields, 0..) |field, index| {
-        variant_names[index] = field.name;
-    }
-    return @Struct(.auto, null, &variant_names, &variant_types, &variant_attributes);
+    return @Struct(.auto, null, type_info.@"union".field_names, &variant_types, &variant_attributes);
 }
 
 pub fn VariantsMeta(comptime U: type) type {
@@ -656,18 +652,14 @@ pub fn Fields(comptime T: type) type {
     }
 
     const field_default: FieldMeta(T) = .{};
-    const field_count = type_info.@"struct".fields.len;
+    const field_count = type_info.@"struct".field_names.len;
     const field_types: [field_count]type = @splat(FieldMeta(T));
-    const field_attributes: [field_count]std.builtin.Type.StructField.Attributes = @splat(.{
+    const field_attributes: [field_count]std.lang.Type.Struct.FieldAttributes = @splat(.{
         .@"comptime" = false,
         .@"align" = null,
         .default_value_ptr = &field_default,
     });
-    comptime var field_names: [field_count][]const u8 = undefined;
-    inline for (type_info.@"struct".fields, 0..) |field, index| {
-        field_names[index] = field.name;
-    }
-    return @Struct(.auto, null, &field_names, &field_types, &field_attributes);
+    return @Struct(.auto, null, type_info.@"struct".field_names, &field_types, &field_attributes);
 }
 
 /// Declaration metadata. Unsupported field shapes remain explicit for compiler checks.
@@ -691,9 +683,9 @@ pub fn Meta(comptime T: type) type {
 /// Returns the tagged union selected by `T`'s command field, or an empty enum for
 /// commands without one. Validation rejects metadata that requires a command field.
 pub fn SubcommandUnion(comptime T: type) type {
-    inline for (@typeInfo(T).@"struct".fields) |field| {
-        const Union = switch (@typeInfo(field.type)) {
-            .@"union" => field.type,
+    inline for (@typeInfo(T).@"struct".field_types) |Field| {
+        const Union = switch (@typeInfo(Field)) {
+            .@"union" => Field,
             .optional => |optional| switch (@typeInfo(optional.child)) {
                 .@"union" => optional.child,
                 else => continue,

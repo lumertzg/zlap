@@ -1,6 +1,6 @@
 # zlap
 
-`zlap` is a table-driven command-line parser for Zig 0.16.
+`zlap` is a table-driven command-line parser for Zig 0.17.
 Describe commands as structs and tagged unions, then parse argv into typed values.
 
 ## Features

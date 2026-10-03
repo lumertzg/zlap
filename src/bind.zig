@@ -14,11 +14,12 @@ const BindingError = ConversionError || error{ OutOfMemory, Conflict };
 /// the seen set still decides whether they satisfy the required-field check.
 pub fn defaults(comptime T: type) T {
     var value: T = undefined;
-    inline for (comptime structFields(T)) |field| {
-        if (field.defaultValue()) |default_value| {
-            @field(value, field.name) = default_value;
-        } else if (comptime isCountField(T, field.name)) {
-            @field(value, field.name) = 0;
+    const info = comptime structInfo(T);
+    inline for (info.field_names, info.field_types, info.field_attrs) |field_name, Field, attrs| {
+        if (attrs.defaultValue(Field)) |default_value| {
+            @field(value, field_name) = default_value;
+        } else if (comptime isCountField(T, field_name)) {
+            @field(value, field_name) = 0;
         }
     }
     return value;
@@ -138,7 +139,7 @@ fn updateWithLists(
         .value = value,
         .active_lists = active_lists,
     };
-    var new_commands: NewCommands(T) = NewCommands(T).initEmpty();
+    var new_commands: NewCommands(T) = .empty;
     var parser = schema.Parser.init(&compiled.table, argv, diagnostic);
 
     const mode: ParseMode(T) = .{ .update = .{
@@ -317,11 +318,12 @@ fn applyEnvironment(
     comptime depth: usize,
 ) schema.Error!void {
     const meta = comptime commandMeta(Current);
-    inline for (comptime structFields(Current)) |field| {
-        if (comptime isCommandField(field.type)) continue;
-        const options = comptime @field(meta.fields, field.name);
+    const environment_info = comptime structInfo(Current);
+    inline for (environment_info.field_names, environment_info.field_types) |field_name, Field| {
+        if (comptime isCommandField(Field)) continue;
+        const options = comptime @field(meta.fields, field_name);
         if (comptime options.env) |name| {
-            const id = bindingId(Root, current, field.name);
+            const id = bindingId(Root, current, field_name);
             if (!context.seen.isSet(id)) {
                 if (environmentValue(env, name)) |text| {
                     context.bind(.{
@@ -351,36 +353,20 @@ fn applyEnvironment(
     }
 
     if (depth == context.path.depth) return;
-    const command = commandField(Current) orelse unreachable;
-    const Union = commandUnion(command.type);
-    const selected = context.path.ids[depth + 1];
-    if (comptime isOptionalCommand(command.type)) {
-        if (@field(value.*, command.name)) |*selected_value| {
-            return applyEnvironmentInVariant(
-                Root,
-                Union,
-                selected_value,
-                context,
-                env,
-                argv,
-                current,
-                depth,
-                selected,
-            );
+    const command_info = comptime structInfo(Current);
+    inline for (command_info.field_names, command_info.field_types) |command_name, Command| {
+        if (comptime !isCommandField(Command)) continue;
+        const selected = context.path.ids[depth + 1];
+        const Union = commandUnion(Command);
+        if (comptime isOptionalCommand(Command)) {
+            if (@field(value.*, command_name)) |*selected_value| {
+                return applyEnvironmentInVariant(Root, Union, selected_value, context, env, argv, current, depth, selected);
+            }
+            unreachable;
         }
-        unreachable;
+        return applyEnvironmentInVariant(Root, Union, &@field(value.*, command_name), context, env, argv, current, depth, selected);
     }
-    return applyEnvironmentInVariant(
-        Root,
-        Union,
-        &@field(value.*, command.name),
-        context,
-        env,
-        argv,
-        current,
-        depth,
-        selected,
-    );
+    unreachable;
 }
 
 fn applyEnvironmentInVariant(
@@ -453,7 +439,7 @@ fn FillContext(comptime T: type) type {
 
         allocator: std.mem.Allocator,
         value: *T,
-        seen: Seen(T) = Seen(T).initEmpty(),
+        seen: Seen(T) = .empty,
         path: ActivePath(T) = ActivePath(T).init(),
         active_lists: *ActiveLists,
         first_conversion: ?schema.Diagnostic = null,
@@ -592,14 +578,15 @@ fn bindInActiveCommand(
 ) BindingError!void {
     // The declaration tree cannot recurse by value, and this descent is bounded by max_depth.
     if (target == current) {
-        inline for (comptime structFields(Current)) |field| {
-            if (comptime std.mem.eql(u8, field.name, field_name)) {
-                std.debug.assert(!isCommandField(field.type));
+        const info = comptime structInfo(Current);
+        inline for (info.field_names, info.field_types, info.field_attrs) |name, Field, attrs| {
+            if (comptime std.mem.eql(u8, name, field_name)) {
+                std.debug.assert(!isCommandField(Field));
                 return bindField(
-                    field.type,
+                    Field,
                     context.allocator,
-                    &@field(current_value.*, field.name),
-                    field.default_value_ptr,
+                    &@field(current_value.*, name),
+                    attrs.default_value_ptr,
                     context.active_lists,
                     options.input.id,
                     options.input.text,
@@ -615,35 +602,19 @@ fn bindInActiveCommand(
     }
 
     std.debug.assert(depth < context.path.depth);
-    const command = commandField(Current) orelse unreachable;
-    const Union = commandUnion(command.type);
-    if (comptime isOptionalCommand(command.type)) {
-        if (@field(current_value.*, command.name)) |*selected| {
-            return bindInSelectedVariant(
-                Root,
-                Union,
-                selected,
-                context,
-                target,
-                field_name,
-                options,
-                current,
-                depth,
-            );
+    const info = comptime structInfo(Current);
+    inline for (info.field_names, info.field_types) |command_name, Command| {
+        if (comptime !isCommandField(Command)) continue;
+        const Union = commandUnion(Command);
+        if (comptime isOptionalCommand(Command)) {
+            if (@field(current_value.*, command_name)) |*selected| {
+                return bindInSelectedVariant(Root, Union, selected, context, target, field_name, options, current, depth);
+            }
+            unreachable;
         }
-        unreachable;
+        return bindInSelectedVariant(Root, Union, &@field(current_value.*, command_name), context, target, field_name, options, current, depth);
     }
-    return bindInSelectedVariant(
-        Root,
-        Union,
-        &@field(current_value.*, command.name),
-        context,
-        target,
-        field_name,
-        options,
-        current,
-        depth,
-    );
+    unreachable;
 }
 
 fn bindInSelectedVariant(
@@ -742,14 +713,15 @@ fn updateInActiveCommand(
         std.debug.assert(current == path.ids[depth]);
         const command = commandField(Current) orelse unreachable;
         const Union = commandUnion(command.type);
-        inline for (comptime unionFields(Union)) |variant| {
-            const child = comptime nodeIdForVariant(Root, current, variant.name);
+        const union_info = comptime unionInfo(Union);
+        inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
+            const child = comptime nodeIdForVariant(Root, current, variant_name);
             if (target == child) {
                 if (!new_commands.isSet(current) and commandHasVariant(
                     command.type,
                     @field(value.*, command.name),
                     Union,
-                    variant.name,
+                    variant_name,
                 )) return;
 
                 if (!new_commands.isSet(current)) {
@@ -761,8 +733,8 @@ fn updateInActiveCommand(
                 }
                 @field(value.*, command.name) = @unionInit(
                     Union,
-                    variant.name,
-                    defaults(variant.type),
+                    variant_name,
+                    defaults(Variant),
                 );
                 new_commands.set(child);
                 return;
@@ -865,10 +837,11 @@ fn activateInActiveCommand(
         std.debug.assert(current == path.ids[depth]);
         const command = commandField(Current) orelse unreachable;
         const Union = commandUnion(command.type);
-        inline for (comptime unionFields(Union)) |variant| {
-            const child = comptime nodeIdForVariant(Root, current, variant.name);
+        const union_info = comptime unionInfo(Union);
+        inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
+            const child = comptime nodeIdForVariant(Root, current, variant_name);
             if (target == child) {
-                const selected = @unionInit(Union, variant.name, defaults(variant.type));
+                const selected = @unionInit(Union, variant_name, defaults(Variant));
                 @field(value.*, command.name) = selected;
                 return;
             }
@@ -951,7 +924,7 @@ fn captureExternalInActiveCommand(
                 []const []const u8,
                 context.allocator,
                 &value.args,
-                structFields(schema.ExternalCommand)[0].default_value_ptr,
+                structInfo(schema.ExternalCommand).field_attrs[0].default_value_ptr,
                 context.active_lists,
                 null,
                 argument,
@@ -1050,7 +1023,7 @@ fn bindField(
             slot.* = parsed;
         },
         .pointer => |pointer| {
-            if (pointer.size == .slice and pointer.is_const and pointer.child != u8) {
+            if (pointer.size == .slice and pointer.attrs.@"const" and pointer.child != u8) {
                 return appendList(
                     T,
                     allocator,
@@ -1109,7 +1082,7 @@ fn bindScalar(
         },
         .@"enum" => slot.* = enumFromKebab(T, text) orelse return error.InvalidValue,
         .pointer => |pointer| {
-            if (pointer.size != .slice or !pointer.is_const or pointer.child != u8) {
+            if (pointer.size != .slice or !pointer.attrs.@"const" or pointer.child != u8) {
                 return error.InvalidValue;
             }
             slot.* = text;
@@ -1408,18 +1381,18 @@ fn isDefaultList(
 
 fn releaseOwnedLists(comptime T: type, allocator: std.mem.Allocator, value: *const T) void {
     switch (@typeInfo(T)) {
-        .@"struct" => inline for (comptime structFields(T)) |field| {
-            if (comptime isList(field.type)) {
+        .@"struct" => inline for (structInfo(T).field_names, structInfo(T).field_types, structInfo(T).field_attrs) |field_name, Field, attrs| {
+            if (comptime isList(Field)) {
                 releaseOwnedList(
-                    field.type,
+                    Field,
                     allocator,
-                    @field(value.*, field.name),
-                    field.default_value_ptr,
+                    @field(value.*, field_name),
+                    attrs.default_value_ptr,
                 );
                 continue;
             }
-            if (comptime isCommandField(field.type)) {
-                releaseOwnedLists(field.type, allocator, &@field(value.*, field.name));
+            if (comptime isCommandField(Field)) {
+                releaseOwnedLists(Field, allocator, &@field(value.*, field_name));
             }
         },
         .@"union" => releaseOwnedVariantLists(T, allocator, value),
@@ -1453,7 +1426,7 @@ fn releaseOwnedVariantLists(
 
 fn isList(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .pointer => |pointer| pointer.size == .slice and pointer.is_const and pointer.child != u8,
+        .pointer => |pointer| pointer.size == .slice and pointer.attrs.@"const" and pointer.child != u8,
         else => false,
     };
 }
@@ -1549,17 +1522,18 @@ fn checkListMinimums(
     comptime current: schema.CmdId,
 ) schema.Error!void {
     const meta = comptime commandMeta(Current);
-    inline for (comptime structFields(Current)) |field| {
-        if (comptime isCommandField(field.type)) continue;
-        const options = comptime @field(meta.fields, field.name);
+    const info = comptime structInfo(Current);
+    inline for (info.field_names, info.field_types) |field_name, Field| {
+        if (comptime isCommandField(Field)) continue;
+        const options = comptime @field(meta.fields, field_name);
         if (comptime options.min) |min| {
-            const values = @field(value.*, field.name);
+            const values = @field(value.*, field_name);
             if (values.len < min) {
                 diagnostic.* = .{
                     .kind = .missing_required,
                     .arg_index = @intCast(argv.len()),
                     .command = current,
-                    .binding = bindingId(Root, current, field.name),
+                    .binding = bindingId(Root, current, field_name),
                 };
                 return error.ParseFailed;
             }
@@ -1576,11 +1550,12 @@ fn checkRelationships(
     comptime current: schema.CmdId,
 ) schema.Error!void {
     const meta = comptime commandMeta(Current);
-    inline for (comptime structFields(Current)) |field| {
-        if (comptime isCommandField(field.type)) continue;
-        const id = bindingId(Root, current, field.name);
+    const info = comptime structInfo(Current);
+    inline for (info.field_names, info.field_types) |field_name, Field| {
+        if (comptime isCommandField(Field)) continue;
+        const id = bindingId(Root, current, field_name);
         if (seen.isSet(id)) {
-            const options = comptime @field(meta.fields, field.name);
+            const options = comptime @field(meta.fields, field_name);
             inline for (options.conflicts) |target| {
                 const target_name = @tagName(target);
                 if (seen.isSet(bindingId(Root, current, target_name))) {
@@ -1651,15 +1626,16 @@ fn checkNewRequiredInCommand(
 ) schema.Error!void {
     if (comptime Current == schema.ExternalCommand) return;
     if (new_commands.isSet(current)) {
-        inline for (comptime structFields(Current)) |field| {
-            if (comptime !isCommandField(field.type)) {
-                if (field.defaultValue() == null) {
-                    if (!seen.isSet(bindingId(Root, current, field.name))) {
+        const info = comptime structInfo(Current);
+        inline for (info.field_names, info.field_types, info.field_attrs) |field_name, Field, attrs| {
+            if (comptime !isCommandField(Field)) {
+                if (attrs.default_value_ptr == null) {
+                    if (!seen.isSet(bindingId(Root, current, field_name))) {
                         diagnostic.* = .{
                             .kind = .missing_required,
                             .arg_index = @intCast(argv.len()),
                             .command = current,
-                            .binding = bindingId(Root, current, field.name),
+                            .binding = bindingId(Root, current, field_name),
                         };
                         return error.ParseFailed;
                     }
@@ -1760,10 +1736,11 @@ fn checkRequiredInCommand(
     comptime depth: usize,
 ) schema.Error!void {
     if (comptime Current == schema.ExternalCommand) return;
-    inline for (comptime structFields(Current)) |field| {
-        if (comptime isCommandField(field.type)) continue;
-        const id = bindingId(Root, current, field.name);
-        if (field.defaultValue() == null and !seen.isSet(id)) {
+    const info = comptime structInfo(Current);
+    inline for (info.field_names, info.field_types, info.field_attrs) |field_name, Field, attrs| {
+        if (comptime isCommandField(Field)) continue;
+        const id = bindingId(Root, current, field_name);
+        if (attrs.default_value_ptr == null and !seen.isSet(id)) {
             diagnostic.* = .{
                 .kind = .missing_required,
                 .arg_index = @intCast(argv.len()),
@@ -1789,12 +1766,13 @@ fn checkRequiredInCommand(
 
     const Union = commandUnion(command.type);
     const selected = path.ids[depth + 1];
-    inline for (comptime unionFields(Union)) |variant| {
-        const child = comptime nodeIdForVariant(Root, current, variant.name);
+    const union_info = comptime unionInfo(Union);
+    inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
+        const child = comptime nodeIdForVariant(Root, current, variant_name);
         if (selected == child) {
             return checkRequiredInCommand(
                 Root,
-                variant.type,
+                Variant,
                 path,
                 seen,
                 diagnostic,
@@ -1853,8 +1831,17 @@ fn nodeIdForVariant(
     @compileError("zlap command variant is missing from the compiled tree");
 }
 
-fn commandField(comptime T: type) ?std.builtin.Type.StructField {
-    return declaration.commandField(T);
+const CommandField = struct {
+    name: []const u8,
+    type: type,
+};
+
+fn commandField(comptime T: type) ?CommandField {
+    const info = structInfo(T);
+    inline for (info.field_names, info.field_types) |name, Field| {
+        if (isCommandField(Field)) return .{ .name = name, .type = Field };
+    }
+    return null;
 }
 
 fn commandMeta(comptime T: type) schema.Meta(T) {
@@ -1874,9 +1861,8 @@ fn commandUnion(comptime T: type) type {
         @compileError("zlap command fields must be tagged unions");
 }
 
-fn unionFields(comptime T: type) []const std.builtin.Type.UnionField {
-    return declaration.unionFields(T);
-}
+const structInfo = declaration.structInfo;
+const unionInfo = declaration.unionInfo;
 
 fn invalidValueDiagnostic(
     command: schema.CmdId,
@@ -1896,9 +1882,9 @@ fn invalidValueDiagnostic(
 }
 
 fn enumFromKebab(comptime T: type, text: []const u8) ?T {
-    inline for (@typeInfo(T).@"enum".fields) |field| {
-        if (kebabCaseEql(field.name, text)) {
-            return @enumFromInt(field.value);
+    inline for (@typeInfo(T).@"enum".field_names, @typeInfo(T).@"enum".field_values) |name, value| {
+        if (kebabCaseEql(name, text)) {
+            return @fromBackingInt(@intCast(value));
         }
     }
     return null;
@@ -1930,10 +1916,6 @@ fn kebabCaseEql(name: []const u8, text: []const u8) bool {
         text_index += 1;
     }
     return text_index == text.len;
-}
-
-fn structFields(comptime T: type) []const std.builtin.Type.StructField {
-    return declaration.structFields(T);
 }
 
 fn ActivePath(comptime T: type) type {

@@ -1,6 +1,6 @@
 # Contributing
 
-Use Zig 0.16.0, installed directly or through [mise](https://mise.jdx.dev/).
+Use Zig 0.17.0, installed directly or through [mise](https://mise.jdx.dev/).
 
 From the repository root, run:
 

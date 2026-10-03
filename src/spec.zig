@@ -122,14 +122,15 @@ fn writeCommand(
     writeSubcommands(Root, Current, node_id, writer);
     writer.write("]}");
 
-    if (commandField(Current)) |field| {
-        const Union = commandUnion(field.type) orelse unreachable;
-        inline for (unionFields(Union)) |variant| {
-            if (isExternalVariant(variant)) continue;
+    if (comptime commandFieldType(Current)) |Command| {
+        const Union = commandUnion(Command) orelse unreachable;
+        const union_info = unionInfo(Union);
+        inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
+            if (isExternalVariant(Variant)) continue;
             writeCommand(
                 Root,
-                variant.type,
-                nodeId(Root, node_id, variant.name),
+                Variant,
+                nodeId(Root, node_id, variant_name),
                 node_count,
                 next_binding,
                 writer,
@@ -150,19 +151,21 @@ fn writeBindings(
     const meta = commandMeta(Current);
     var first = true;
     var binding_id = binding_start;
-    inline for (structFields(Current)) |field| {
-        if (isCommandField(field.type)) continue;
-        const options = @field(meta.fields, field.name);
+    const info = structInfo(Current);
+    inline for (info.field_names, info.field_types) |field_name, Field| {
+        if (isCommandField(Field)) continue;
+        const options = @field(meta.fields, field_name);
         if (options.positional == positional) {
             std.debug.assert(compiled.bindings[binding_id].command == node_id);
             if (options.one_of_flags) {
-                inline for (@typeInfo(field.type).@"enum".fields) |tag| {
+                inline for (@typeInfo(Field).@"enum".field_names) |tag_name| {
                     writeBinding(
                         Root,
                         binding_id,
-                        field,
+                        field_name,
+                        Field,
                         options,
-                        kebabCase(tag.name),
+                        kebabCase(tag_name),
                         false,
                         &first,
                         writer,
@@ -172,9 +175,10 @@ fn writeBindings(
                 writeBinding(
                     Root,
                     binding_id,
-                    field,
+                    field_name,
+                    Field,
                     options,
-                    options.long orelse kebabCase(field.name),
+                    options.long orelse kebabCase(field_name),
                     positional,
                     &first,
                     writer,
@@ -188,7 +192,8 @@ fn writeBindings(
 fn writeBinding(
     comptime Root: type,
     binding_id: schema.FlagId,
-    comptime field: std.builtin.Type.StructField,
+    comptime field_name: []const u8,
+    comptime Field: type,
     comptime options: anytype,
     comptime name: []const u8,
     comptime positional: bool,
@@ -201,7 +206,7 @@ fn writeBinding(
     writer.write("{\"id\":");
     writer.number(binding_id);
     writer.write(",\"field\":");
-    writer.string(field.name);
+    writer.string(field_name);
     writer.write(",\"kind\":");
     writer.string(@tagName(compiled.table.flags[binding_id].kind));
     if (options.one_of_flags) {
@@ -215,7 +220,7 @@ fn writeBinding(
     writer.write(if (options.hide) "true" else "false");
     if (positional) {
         writer.write(",\"name\":");
-        writer.string(options.value_name orelse field.name);
+        writer.string(options.value_name orelse field_name);
     } else {
         writer.write(",\"long\":");
         writer.string(name);
@@ -233,7 +238,7 @@ fn writeBinding(
             if (options.negate) |negate| writer.string(negate) else writer.write("null");
         } else writer.write("null");
         writer.write(",\"value_name\":");
-        if (takesValue(field.type, options)) {
+        if (takesValue(Field, options)) {
             if (options.value_name) |value_name| {
                 writer.string(value_name);
             } else writer.write("null");
@@ -246,8 +251,8 @@ fn writeBinding(
 
 fn bindingCount(comptime T: type) schema.FlagId {
     var count: schema.FlagId = 0;
-    inline for (structFields(T)) |field| {
-        if (!isCommandField(field.type)) count += 1;
+    inline for (structInfo(T).field_types) |Field| {
+        if (!isCommandField(Field)) count += 1;
     }
     return count;
 }
@@ -258,19 +263,20 @@ fn writeSubcommands(
     node_id: schema.CmdId,
     writer: *JsonWriter,
 ) void {
-    const field = commandField(Current) orelse return;
-    const Union = commandUnion(field.type) orelse unreachable;
+    const Command = commandFieldType(Current) orelse return;
+    const Union = commandUnion(Command) orelse unreachable;
     const meta = variantsMeta(Union);
+    const union_info = unionInfo(Union);
     var first = true;
-    inline for (unionFields(Union)) |variant| {
-        if (isExternalVariant(variant)) continue;
+    inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
+        if (isExternalVariant(Variant)) continue;
         if (!first) writer.byte(',');
         first = false;
-        const options = @field(meta.variants, variant.name);
+        const options = @field(meta.variants, variant_name);
         writer.write("{\"id\":");
-        writer.number(nodeId(Root, node_id, variant.name));
+        writer.number(nodeId(Root, node_id, variant_name));
         writer.write(",\"name\":");
-        writer.string(options.name orelse kebabCase(variant.name));
+        writer.string(options.name orelse kebabCase(variant_name));
         writer.write(",\"aliases\":[");
         writeStrings(options.aliases, writer);
         writer.write("],\"help\":");
@@ -282,7 +288,7 @@ fn writeSubcommands(
 }
 
 fn writeDefaultSubcommand(comptime T: type, writer: *JsonWriter) void {
-    const command = commandField(T) orelse {
+    const Command = comptime commandFieldType(T) orelse {
         writer.write("null");
         return;
     };
@@ -290,7 +296,7 @@ fn writeDefaultSubcommand(comptime T: type, writer: *JsonWriter) void {
         writer.write("null");
         return;
     };
-    const meta = variantsMeta(commandUnion(command.type) orelse unreachable);
+    const meta = variantsMeta(commandUnion(Command) orelse unreachable);
     const name = @tagName(default_variant);
     writer.string(@field(meta.variants, name).name orelse kebabCase(name));
 }
@@ -317,9 +323,9 @@ fn writeStrings(comptime strings: []const []const u8, writer: *JsonWriter) void 
 
 const commandMeta = declaration.commandMeta;
 const variantsMeta = declaration.variantsMeta;
-const structFields = declaration.structFields;
-const unionFields = declaration.unionFields;
-const commandField = declaration.commandField;
+const structInfo = declaration.structInfo;
+const unionInfo = declaration.unionInfo;
+const commandFieldType = declaration.commandFieldType;
 const isCommandField = declaration.isCommandField;
 
 fn takesValue(comptime T: type, comptime options: anytype) bool {
@@ -333,8 +339,8 @@ fn takesValue(comptime T: type, comptime options: anytype) bool {
 const commandUnion = declaration.commandUnion;
 const kebabCase = declaration.kebabCase;
 
-fn isExternalVariant(comptime field: std.builtin.Type.UnionField) bool {
-    return field.type == schema.ExternalCommand;
+fn isExternalVariant(comptime Variant: type) bool {
+    return Variant == schema.ExternalCommand;
 }
 
 test "spec emits metadata for commands, flags, and positionals" {
