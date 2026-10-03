@@ -1,6 +1,6 @@
 .{
     .name = .zlap_examples,
-    .version = "0.1.0",
+    .version = "0.2.0",
     .fingerprint = 0x768d4d423e59ef2b,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
