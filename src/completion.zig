@@ -343,12 +343,13 @@ fn writeEnumValuesForBinding(
     if (comptime compiled.bindings.len == 0) return false;
     const target = compiled.bindings[binding];
     if (target.command == current) {
-        inline for (comptime structFields(Current)) |field| {
-            if (std.mem.eql(u8, target.field, field.name)) {
-                const Enum = enumType(field.type) orelse return false;
-                inline for (@typeInfo(Enum).@"enum".fields) |item| {
-                    if (kebabStartsWith(item.name, prefix)) {
-                        try writeKebab(item.name, writer);
+        const info = comptime structInfo(Current);
+        inline for (info.field_names, info.field_types) |field_name, Field| {
+            if (std.mem.eql(u8, target.field, field_name)) {
+                const Enum = enumType(Field) orelse return false;
+                inline for (@typeInfo(Enum).@"enum".field_names) |item_name| {
+                    if (kebabStartsWith(item_name, prefix)) {
+                        try writeKebab(item_name, writer);
                         try writer.writeByte('\n');
                     }
                 }
@@ -358,12 +359,13 @@ fn writeEnumValuesForBinding(
         unreachable;
     }
 
-    const command = commandField(Current) orelse return false;
-    const Union = commandUnion(command.type) orelse unreachable;
-    inline for (comptime unionFields(Union)) |variant| {
-        const child = comptime nodeId(Root, current, variant.name);
+    const Command = commandFieldType(Current) orelse return false;
+    const Union = commandUnion(Command) orelse unreachable;
+    const union_info = comptime unionInfo(Union);
+    inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
+        const child = comptime nodeId(Root, current, variant_name);
         if (isDescendant(compiled.nodes, target.command, child)) {
-            return writeEnumValuesForBinding(Root, variant.type, binding, prefix, writer, child);
+            return writeEnumValuesForBinding(Root, Variant, binding, prefix, writer, child);
         }
     }
     return false;
@@ -415,9 +417,9 @@ fn writeKebab(name: []const u8, writer: *std.Io.Writer) Error!void {
     }
 }
 
-const structFields = declaration.structFields;
-const unionFields = declaration.unionFields;
-const commandField = declaration.commandField;
+const structInfo = declaration.structInfo;
+const unionInfo = declaration.unionInfo;
+const commandFieldType = declaration.commandFieldType;
 const commandUnion = declaration.commandUnion;
 
 fn nodeId(
@@ -528,8 +530,8 @@ test "completion scripts invoke the hidden request" {
     const Command = struct {
         pub const meta: schema.Meta(@This()) = .{ .bin = "tool" };
     };
-    inline for (comptime @typeInfo(Shell).@"enum".fields) |field| {
-        const shell: Shell = comptime @enumFromInt(field.value);
+    inline for (comptime @typeInfo(Shell).@"enum".field_values) |value| {
+        const shell: Shell = comptime @fromBackingInt(@intCast(value));
         const script = completionScript(Command, shell);
         try std.testing.expect(std.mem.indexOf(u8, script, "__complete") != null);
         try std.testing.expect(std.mem.indexOf(u8, script, "tool") != null);

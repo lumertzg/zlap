@@ -24,9 +24,8 @@ const FieldKind = struct {
 };
 
 const CommandField = struct {
-    field: std.builtin.Type.StructField,
+    index: usize,
     union_type: type,
-    optional: bool,
 };
 
 const Stats = struct {
@@ -254,17 +253,18 @@ fn buildBindings(
     const state = context.state;
     const meta = commandMeta(T);
 
-    inline for (structFields(T)) |field| {
-        if (isCommandField(field.type)) continue;
+    const info = structInfo(T);
+    inline for (info.field_names, info.field_types) |field_name, Field| {
+        if (isCommandField(Field)) continue;
 
-        const options = @field(meta.fields, field.name);
+        const options = @field(meta.fields, field_name);
         const id: schema.FlagId = @intCast(state.next_binding);
-        const field_kind = classifyField(field.type);
+        const field_kind = classifyField(Field);
         state.next_binding += 1;
         data.bindings[id] = .{
             .command = node_id,
-            .field = field.name,
-            .parse_arg_expected = parseArgExpected(field.type),
+            .field = field_name,
+            .parse_arg_expected = parseArgExpected(Field),
         };
         data.flags[id] = .{
             .kind = if (options.count) .count else field_kind.kind,
@@ -282,9 +282,9 @@ fn buildBindings(
             appendPositional(data.positionals[0..], &state.next_positional, id);
             continue;
         }
-        appendFieldNames(data.names[name_start..], scope_name_count, field, options, id, true);
+        appendFieldNames(data.names[name_start..], scope_name_count, field_name, Field, options, id, true);
         if (options.global) {
-            appendFieldNames(local_globals, local_global_count, field, options, id, true);
+            appendFieldNames(local_globals, local_global_count, field_name, Field, options, id, true);
         }
     }
 }
@@ -304,22 +304,22 @@ fn buildChildren(
     const data = context.data;
     const state = context.state;
     const union_meta = variantsMeta(command.union_type);
-    const variants = unionFields(command.union_type);
+    const variants = unionInfo(command.union_type);
     const command_start = state.next_command;
     var scope_command_count: usize = 0;
     var child_globals: [global_capacity]schema.Name = undefined;
     var child_global_count: usize = 0;
-    var child_ids: [variants.len]schema.CmdId = undefined;
+    var child_ids: [variants.field_names.len]schema.CmdId = undefined;
     appendNamesUnlessClaimed(child_globals[0..], &child_global_count, local_globals);
     appendNamesUnlessClaimed(child_globals[0..], &child_global_count, inherited);
 
-    inline for (variants, 0..) |union_field, index| {
+    inline for (variants.field_names, variants.field_types, 0..) |variant_name, Variant, index| {
         const child_id: schema.CmdId = @intCast(state.next_node);
         state.next_node += 1;
         child_ids[index] = child_id;
-        const options = @field(union_meta.variants, union_field.name);
-        if (isExternalVariant(union_field)) continue;
-        const child_name = options.name orelse kebabCase(union_field.name);
+        const options = @field(union_meta.variants, variant_name);
+        if (isExternalVariant(Variant)) continue;
+        const child_name = options.name orelse kebabCase(variant_name);
         appendCommand(data.commands[command_start..], &scope_command_count, child_name, child_id);
         inline for (options.aliases) |alias| {
             appendCommand(data.commands[command_start..], &scope_command_count, alias, child_id);
@@ -341,17 +341,17 @@ fn buildChildren(
         ];
     }
 
-    inline for (variants, 0..) |union_field, index| {
-        const options = @field(union_meta.variants, union_field.name);
+    inline for (variants.field_names, variants.field_types, 0..) |variant_name, Variant, index| {
+        const options = @field(union_meta.variants, variant_name);
         buildNode(
-            union_field.type,
+            Variant,
             context,
             .{
                 .id = child_ids[index],
                 .parent = parent.id,
-                .name = options.name orelse kebabCase(union_field.name),
-                .command_field = command.field.name,
-                .variant = union_field.name,
+                .name = options.name orelse kebabCase(variant_name),
+                .command_field = structInfo(T).field_names[command.index],
+                .variant = variant_name,
                 .depth = parent.depth + 1,
             },
             child_globals[0..child_global_count],
@@ -367,8 +367,9 @@ fn validateTree(comptime T: type) void {
     validateCommand(T);
     if (commandField(T)) |command| {
         validateVariants(command.union_type, commandMeta(T).external_subcommand);
-        inline for (unionFields(command.union_type)) |union_field| {
-            if (!isExternalVariant(union_field)) validateTree(union_field.type);
+        const variants = unionInfo(command.union_type);
+        inline for (variants.field_types) |Variant| {
+            if (!isExternalVariant(Variant)) validateTree(Variant);
         }
     }
 }
@@ -381,7 +382,7 @@ fn validateCounts(comptime stats: Stats) void {
 
 fn validateCommand(comptime T: type) void {
     const meta = commandMeta(T);
-    const fields = structFields(T);
+    const fields = structInfo(T);
     var command_count: usize = 0;
     var previous_positional_list = false;
     var previous_list_max: ?u32 = null;
@@ -390,20 +391,20 @@ fn validateCommand(comptime T: type) void {
         @compileError("zlap does not support repeated_scalar = .error");
     }
 
-    inline for (fields) |field| {
-        const options = @field(meta.fields, field.name);
-        if (isCommandField(field.type)) {
+    inline for (fields.field_names, fields.field_types, fields.field_attrs) |field_name, Field, attrs| {
+        const options = @field(meta.fields, field_name);
+        if (isCommandField(Field)) {
             command_count += 1;
-            validateCommandField(field, options);
+            validateCommandField(Field, attrs, options);
             continue;
         }
 
-        validateField(T, field, options);
+        validateField(T, field_name, Field, attrs, options);
         if (options.positional) {
             if (previous_positional_list and previous_list_max == null) {
                 @compileError("zlap positional lists before another positional require .max");
             }
-            previous_positional_list = classifyField(field.type).kind == .list;
+            previous_positional_list = classifyField(Field).kind == .list;
             previous_list_max = options.max;
         }
     }
@@ -418,14 +419,11 @@ fn validateSubcommandPolicies(comptime T: type, comptime command_count: usize) v
         if (command == null) {
             @compileError("zlap default_subcommand requires an optional command field");
         }
-        if (@typeInfo(command.?.field.type) != .optional) {
+        if (@typeInfo(structInfo(T).field_types[command.?.index]) != .optional) {
             @compileError("zlap default_subcommand requires an optional command field");
         }
-        if (isExternalVariant(unionFields(command.?.union_type)[
-            unionFieldIndex(
-                command.?.union_type,
-                @tagName(meta.default_subcommand.?),
-            )
+        if (isExternalVariant(unionInfo(command.?.union_type).field_types[
+            unionFieldIndex(command.?.union_type, @tagName(meta.default_subcommand.?))
         ])) {
             @compileError("zlap default_subcommand cannot select an external subcommand");
         }
@@ -444,20 +442,22 @@ fn validateSubcommandPolicies(comptime T: type, comptime command_count: usize) v
     if (meta.default_subcommand != null) {
         @compileError("zlap external_subcommand cannot be combined with default_subcommand");
     }
-    inline for (structFields(T)) |field| {
-        if (isCommandField(field.type)) continue;
-        if (@field(meta.fields, field.name).positional) {
+    const info = structInfo(T);
+    inline for (info.field_names, info.field_types) |field_name, Field| {
+        if (isCommandField(Field)) continue;
+        if (@field(meta.fields, field_name).positional) {
             @compileError("zlap external_subcommand cannot be combined with positional fields");
         }
     }
 }
 
 fn validateCommandField(
-    comptime field: std.builtin.Type.StructField,
+    comptime Field: type,
+    comptime attrs: std.lang.Type.Struct.FieldAttributes,
     comptime options: anytype,
 ) void {
-    if (@typeInfo(field.type) == .optional) {
-        const default_value = field.defaultValue() orelse
+    if (@typeInfo(Field) == .optional) {
+        const default_value = attrs.defaultValue(Field) orelse
             @compileError("zlap optional command fields must default to null");
         if (default_value != null) {
             @compileError("zlap optional command fields must default to null");
@@ -478,16 +478,17 @@ fn validateVariants(comptime U: type, comptime external_subcommand: bool) void {
     if (variantsHaveCollision(U)) {
         @compileError("zlap duplicate subcommand spelling");
     }
-    inline for (unionFields(U)) |field| {
-        if (isExternalVariant(field)) {
-            validateExternalVariant(@field(meta.variants, field.name), external_subcommand);
+    const info = unionInfo(U);
+    inline for (info.field_names, info.field_types) |field_name, Field| {
+        if (isExternalVariant(Field)) {
+            validateExternalVariant(@field(meta.variants, field_name), external_subcommand);
             continue;
         }
-        if (@typeInfo(field.type) != .@"struct") {
+        if (@typeInfo(Field) != .@"struct") {
             @compileError("zlap command variants must contain struct command payloads");
         }
-        const options = @field(meta.variants, field.name);
-        validateCommandName(options.name orelse kebabCase(field.name));
+        const options = @field(meta.variants, field_name);
+        validateCommandName(options.name orelse kebabCase(field_name));
         inline for (options.aliases) |alias| validateCommandName(alias);
     }
 }
@@ -505,10 +506,11 @@ fn variantsHaveCollision(comptime U: type) bool {
     const meta = variantsMeta(U);
     var names: [commandNameCount(U)][]const u8 = undefined;
     var count: usize = 0;
-    inline for (unionFields(U)) |field| {
-        if (isExternalVariant(field)) continue;
-        const options = @field(meta.variants, field.name);
-        const name = options.name orelse kebabCase(field.name);
+    const info = unionInfo(U);
+    inline for (info.field_names, info.field_types) |field_name, Field| {
+        if (isExternalVariant(Field)) continue;
+        const options = @field(meta.variants, field_name);
+        const name = options.name orelse kebabCase(field_name);
         for (names[0..count]) |previous| {
             if (std.mem.eql(u8, previous, name)) return true;
         }
@@ -527,12 +529,14 @@ fn variantsHaveCollision(comptime U: type) bool {
 
 fn validateField(
     comptime T: type,
-    comptime field: std.builtin.Type.StructField,
+    comptime field_name: []const u8,
+    comptime Field: type,
+    comptime attrs: std.lang.Type.Struct.FieldAttributes,
     comptime options: anytype,
 ) void {
-    const field_kind = classifyField(field.type);
-    if (isOptionalScalar(field.type)) {
-        const default_value = field.defaultValue() orelse
+    const field_kind = classifyField(Field);
+    if (isOptionalScalar(Field)) {
+        const default_value = attrs.defaultValue(Field) orelse
             @compileError("zlap optional scalar fields must default to null");
         if (default_value != null) {
             @compileError("zlap optional scalar fields must default to null");
@@ -540,7 +544,7 @@ fn validateField(
     }
     if (options.count) {
         if (options.positional) @compileError("zlap count fields cannot be positional");
-        if (!isInteger(field.type)) @compileError("zlap count requires an integer field");
+        if (!isInteger(Field)) @compileError("zlap count requires an integer field");
     }
     if (options.global and options.positional) {
         @compileError("zlap global fields cannot be positional");
@@ -552,7 +556,7 @@ fn validateField(
         @compileError("zlap positional fields cannot have negate names");
     }
     if (options.one_of_flags) {
-        validateOneOfFlags(field, options);
+        validateOneOfFlags(Field, attrs, options);
     }
     if (options.default_missing != null and !takesValue(field_kind, options.count)) {
         @compileError("zlap default_missing requires a value-taking field");
@@ -565,7 +569,7 @@ fn validateField(
         if (options.count) @compileError("zlap count fields cannot have environment fallback");
     }
     validateListBounds(field_kind, options);
-    validateRelationships(T, field, options);
+    validateRelationships(T, field_name, options);
     if (options.positional) {
         validatePositionalOptions(options);
     } else {
@@ -574,13 +578,14 @@ fn validateField(
 }
 
 fn validateOneOfFlags(
-    comptime field: std.builtin.Type.StructField,
+    comptime Field: type,
+    comptime attrs: std.lang.Type.Struct.FieldAttributes,
     comptime options: anytype,
 ) void {
-    if (@typeInfo(field.type) != .@"enum") {
+    if (@typeInfo(Field) != .@"enum") {
         @compileError("zlap one_of_flags requires an enum field");
     }
-    if (field.defaultValue() != null) {
+    if (attrs.default_value_ptr != null) {
         @compileError("zlap one_of_flags fields must not have a default");
     }
     if (options.positional or options.count or options.short != null or options.long != null or
@@ -604,11 +609,11 @@ fn validateListBounds(comptime field_kind: FieldKind, comptime options: anytype)
 
 fn validateRelationships(
     comptime T: type,
-    comptime field: std.builtin.Type.StructField,
+    comptime field_name: []const u8,
     comptime options: anytype,
 ) void {
-    validateRelationshipTargets(T, field, options.conflicts);
-    validateRelationshipTargets(T, field, options.requires);
+    validateRelationshipTargets(T, field_name, options.conflicts);
+    validateRelationshipTargets(T, field_name, options.requires);
     inline for (options.conflicts) |conflict| {
         inline for (options.requires) |requirement| {
             if (conflict == requirement) {
@@ -620,12 +625,12 @@ fn validateRelationships(
 
 fn validateRelationshipTargets(
     comptime T: type,
-    comptime field: std.builtin.Type.StructField,
+    comptime field_name: []const u8,
     comptime targets: anytype,
 ) void {
     inline for (targets, 0..) |target, index| {
         const target_name = @tagName(target);
-        if (std.mem.eql(u8, field.name, target_name)) {
+        if (std.mem.eql(u8, field_name, target_name)) {
             @compileError("zlap fields cannot declare relationships with themselves");
         }
         if (isCommandField(@FieldType(T, target_name))) {
@@ -664,7 +669,7 @@ fn validateCommandName(comptime name: []const u8) void {
 }
 
 fn treeStats(comptime T: type, inherited_global_names: usize, depth: u16) Stats {
-    const fields = structFields(T);
+    const fields = structInfo(T);
     var result: Stats = .{
         .nodes = 1,
         .names = declaredNameCount(T) + inherited_global_names + 4,
@@ -672,17 +677,18 @@ fn treeStats(comptime T: type, inherited_global_names: usize, depth: u16) Stats 
         .global_names = globalNameCount(T),
         .max_depth = depth,
     };
-    inline for (fields) |field| {
-        if (!isCommandField(field.type)) result.bindings += 1;
+    inline for (fields.field_types) |Field| {
+        if (!isCommandField(Field)) result.bindings += 1;
     }
     if (commandField(T)) |command| {
         const child_inherited = inherited_global_names + globalNameCount(T);
         result.commands += commandNameCount(command.union_type);
-        inline for (unionFields(command.union_type)) |variant| {
-            const child = if (isExternalVariant(variant))
+        const variants = unionInfo(command.union_type);
+        inline for (variants.field_types) |Variant| {
+            const child = if (isExternalVariant(Variant))
                 externalStats(depth + 1)
             else
-                treeStats(variant.type, child_inherited, depth + 1);
+                treeStats(Variant, child_inherited, depth + 1);
             result.nodes += child.nodes;
             result.bindings += child.bindings;
             result.names += child.names;
@@ -698,9 +704,10 @@ fn treeStats(comptime T: type, inherited_global_names: usize, depth: u16) Stats 
 fn commandNameCount(comptime U: type) usize {
     const meta = variantsMeta(U);
     var count: usize = 0;
-    inline for (unionFields(U)) |field| {
-        if (isExternalVariant(field)) continue;
-        count += 1 + @field(meta.variants, field.name).aliases.len;
+    const info = unionInfo(U);
+    inline for (info.field_names, info.field_types) |field_name, Field| {
+        if (isExternalVariant(Field)) continue;
+        count += 1 + @field(meta.variants, field_name).aliases.len;
     }
     return count;
 }
@@ -709,29 +716,29 @@ fn externalStats(depth: u16) Stats {
     return .{ .nodes = 1, .max_depth = depth };
 }
 
-fn isExternalVariant(comptime field: std.builtin.Type.UnionField) bool {
-    return field.type == schema.ExternalCommand;
+fn isExternalVariant(comptime Variant: type) bool {
+    return Variant == schema.ExternalCommand;
 }
 
 fn hasExternalVariant(comptime U: type) bool {
     var count: usize = 0;
-    inline for (unionFields(U)) |field| {
-        if (isExternalVariant(field)) count += 1;
+    inline for (unionInfo(U).field_types) |Variant| {
+        if (isExternalVariant(Variant)) count += 1;
     }
     if (count > 1) @compileError("zlap external_subcommand supports one ExternalCommand variant");
     return count == 1;
 }
 
 fn externalVariantIndex(comptime U: type) usize {
-    inline for (unionFields(U), 0..) |field, index| {
-        if (isExternalVariant(field)) return index;
+    inline for (unionInfo(U).field_types, 0..) |Variant, index| {
+        if (isExternalVariant(Variant)) return index;
     }
     @compileError("zlap external_subcommand requires one ExternalCommand variant");
 }
 
 fn unionFieldIndex(comptime U: type, comptime name: []const u8) usize {
-    inline for (unionFields(U), 0..) |field, index| {
-        if (std.mem.eql(u8, field.name, name)) return index;
+    inline for (unionInfo(U).field_names, 0..) |field_name, index| {
+        if (std.mem.eql(u8, field_name, name)) return index;
     }
     @compileError("zlap command variant is missing from the declaration");
 }
@@ -739,10 +746,11 @@ fn unionFieldIndex(comptime U: type, comptime name: []const u8) usize {
 fn declaredNameCount(comptime T: type) usize {
     const meta = commandMeta(T);
     var count: usize = 0;
-    inline for (structFields(T)) |field| {
-        if (isCommandField(field.type)) continue;
-        const options = @field(meta.fields, field.name);
-        if (!options.positional) count += fieldNameCount(field.type, options);
+    const info = structInfo(T);
+    inline for (info.field_names, info.field_types) |field_name, Field| {
+        if (isCommandField(Field)) continue;
+        const options = @field(meta.fields, field_name);
+        if (!options.positional) count += fieldNameCount(Field, options);
     }
     return count;
 }
@@ -750,10 +758,11 @@ fn declaredNameCount(comptime T: type) usize {
 fn globalNameCount(comptime T: type) usize {
     const meta = commandMeta(T);
     var count: usize = 0;
-    inline for (structFields(T)) |field| {
-        if (isCommandField(field.type)) continue;
-        const options = @field(meta.fields, field.name);
-        if (options.global) count += fieldNameCount(field.type, options);
+    const info = structInfo(T);
+    inline for (info.field_names, info.field_types) |field_name, Field| {
+        if (isCommandField(Field)) continue;
+        const options = @field(meta.fields, field_name);
+        if (options.global) count += fieldNameCount(Field, options);
     }
     return count;
 }
@@ -761,15 +770,16 @@ fn globalNameCount(comptime T: type) usize {
 fn positionalCount(comptime T: type) usize {
     const meta = commandMeta(T);
     var count: usize = 0;
-    inline for (structFields(T)) |field| {
-        if (isCommandField(field.type)) continue;
-        if (@field(meta.fields, field.name).positional) count += 1;
+    const info = structInfo(T);
+    inline for (info.field_names, info.field_types) |field_name, Field| {
+        if (isCommandField(Field)) continue;
+        if (@field(meta.fields, field_name).positional) count += 1;
     }
     return count;
 }
 
 fn fieldNameCount(comptime T: type, comptime options: anytype) usize {
-    if (options.one_of_flags) return @typeInfo(scalarType(T)).@"enum".fields.len;
+    if (options.one_of_flags) return @typeInfo(scalarType(T)).@"enum".field_names.len;
     var count: usize = 1 + options.aliases.len;
     if (options.short != null) count += 1;
     if (options.negate != null) count += 1;
@@ -779,20 +789,21 @@ fn fieldNameCount(comptime T: type, comptime options: anytype) usize {
 fn appendFieldNames(
     names: []schema.Name,
     count: *usize,
-    comptime field: std.builtin.Type.StructField,
+    comptime field_name: []const u8,
+    comptime Field: type,
     comptime options: anytype,
     id: schema.FlagId,
     comptime reject_duplicates: bool,
 ) void {
     if (options.one_of_flags) {
-        inline for (@typeInfo(scalarType(field.type)).@"enum".fields) |tag| {
+        inline for (@typeInfo(scalarType(Field)).@"enum".field_names) |tag_name| {
             appendName(
                 names,
                 count,
                 .{
-                    .spelling = kebabCase(tag.name),
+                    .spelling = kebabCase(tag_name),
                     .target = .{ .flag = id },
-                    .value = kebabCase(tag.name),
+                    .value = kebabCase(tag_name),
                 },
                 reject_duplicates,
             );
@@ -803,7 +814,7 @@ fn appendFieldNames(
         names,
         count,
         .{
-            .spelling = options.long orelse kebabCase(field.name),
+            .spelling = options.long orelse kebabCase(field_name),
             .target = .{ .flag = id },
         },
         reject_duplicates,
@@ -923,13 +934,13 @@ fn hasName(names: []const schema.Name, spelling: []const u8, kind: schema.Name.K
 
 fn commandField(comptime T: type) ?CommandField {
     var found: ?CommandField = null;
-    inline for (declaration.structFields(T)) |field| {
-        const union_type = declaration.commandUnion(field.type) orelse continue;
+    const info = structInfo(T);
+    inline for (info.field_types, 0..) |Field, index| {
+        const union_type = declaration.commandUnion(Field) orelse continue;
         if (found != null) @compileError("zlap supports at most one command field per struct");
         found = .{
-            .field = field,
+            .index = index,
             .union_type = union_type,
-            .optional = @typeInfo(field.type) == .optional,
         };
     }
     return found;
@@ -967,8 +978,8 @@ fn classifyNonOptionalField(comptime T: type) FieldKind {
     };
 }
 
-fn classifyPointer(comptime pointer: std.builtin.Type.Pointer) FieldKind {
-    if (pointer.size != .slice or !pointer.is_const) {
+fn classifyPointer(comptime pointer: std.lang.Type.Pointer) FieldKind {
+    if (pointer.size != .slice or !pointer.attrs.@"const") {
         @compileError("zlap only supports []const slices as pointer fields");
     }
     if (pointer.child == u8) return .{ .kind = .string };
@@ -993,8 +1004,8 @@ fn scalarKind(comptime T: type) ?schema.ValueKind {
     };
 }
 
-fn isConstStringSlice(comptime pointer: std.builtin.Type.Pointer) bool {
-    return pointer.size == .slice and pointer.is_const and pointer.child == u8;
+fn isConstStringSlice(comptime pointer: std.lang.Type.Pointer) bool {
+    return pointer.size == .slice and pointer.attrs.@"const" and pointer.child == u8;
 }
 
 fn isInteger(comptime T: type) bool {
@@ -1049,8 +1060,8 @@ fn takesValue(field_kind: FieldKind, count: bool) bool {
     return !count and field_kind.kind != .boolean;
 }
 
-const structFields = declaration.structFields;
-const unionFields = declaration.unionFields;
+const structInfo = declaration.structInfo;
+const unionInfo = declaration.unionInfo;
 const commandMeta = declaration.commandMeta;
 const variantsMeta = declaration.variantsMeta;
 const kebabCase = declaration.kebabCase;

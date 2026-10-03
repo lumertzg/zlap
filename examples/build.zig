@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
 
     const fmt_step = b.step("fmt", "Check code formatting");
     const fmt_check = b.addFmt(.{
-        .paths = &.{ "basic", "nested", "build.zig", "build.zig.zon" },
+        .paths = &.{ b.path("basic"), b.path("nested"), b.path("build.zig"), b.path("build.zig.zon") },
         .check = true,
     });
     fmt_step.dependOn(&fmt_check.step);
@@ -29,7 +29,7 @@ fn addExample(
     b: *std.Build,
     zlap: *std.Build.Dependency,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     name: []const u8,
     source_path: []const u8,
 ) *std.Build.Step.Compile {
@@ -52,7 +52,7 @@ fn addRunStep(
     description: []const u8,
 ) void {
     const run_cmd = b.addRunArtifact(exe);
-    if (b.args) |args| run_cmd.addArgs(args);
+    run_cmd.addPassthruArgs();
 
     const run_step = b.step(name, description);
     run_step.dependOn(&run_cmd.step);

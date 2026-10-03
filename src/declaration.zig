@@ -3,16 +3,16 @@
 const std = @import("std");
 const schema = @import("schema.zig");
 
-pub fn structFields(comptime T: type) []const std.builtin.Type.StructField {
+pub fn structInfo(comptime T: type) std.lang.Type.Struct {
     return switch (@typeInfo(T)) {
-        .@"struct" => |info| info.fields,
+        .@"struct" => |value| value,
         else => @compileError("zlap command declarations require struct types"),
     };
 }
 
-pub fn unionFields(comptime T: type) []const std.builtin.Type.UnionField {
+pub fn unionInfo(comptime T: type) std.lang.Type.Union {
     return switch (@typeInfo(T)) {
-        .@"union" => |info| info.fields,
+        .@"union" => |value| value,
         else => @compileError("zlap command fields require tagged unions"),
     };
 }
@@ -33,9 +33,9 @@ pub fn isCommandField(comptime T: type) bool {
     return commandUnion(T) != null;
 }
 
-pub fn commandField(comptime T: type) ?std.builtin.Type.StructField {
-    inline for (structFields(T)) |field| {
-        if (isCommandField(field.type)) return field;
+pub fn commandFieldType(comptime T: type) ?type {
+    inline for (structInfo(T).field_types) |Field| {
+        if (isCommandField(Field)) return Field;
     }
     return null;
 }
