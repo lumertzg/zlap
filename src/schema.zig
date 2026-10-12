@@ -67,7 +67,7 @@ pub const Diagnostic = struct {
     };
 };
 
-pub const ValueKind = enum {
+pub const ScalarKind = enum {
     boolean,
     count,
     signed_integer,
@@ -80,9 +80,9 @@ pub const ValueKind = enum {
 };
 
 pub const Flag = struct {
-    kind: ValueKind,
+    kind: ScalarKind,
     /// Set only for `.list`, never to `.list` or `.count`.
-    list_element: ?ValueKind = null,
+    list_element: ?ScalarKind = null,
     positional: bool = false,
     require_equals: bool = false,
     allow_hyphen_values: bool = false,
@@ -210,12 +210,14 @@ pub const Parser = struct {
         if (self.failed) return null;
         if (self.external_selected) return null;
         if (self.short_index < self.short_count) {
-            return try self.nextShortEvent();
+            const event = try self.nextShortEvent();
+            return event;
         }
         if (self.replay_token) |token| {
             const source_index = self.replay_arg_index;
             self.replay_token = null;
-            return try self.wordEvent(token, source_index);
+            const event = try self.wordEvent(token, source_index);
+            return event;
         }
 
         while (self.arg_index < self.argv.len()) {
@@ -224,27 +226,33 @@ pub const Parser = struct {
             self.arg_index += 1;
 
             if (self.flags_stopped) {
-                return try self.positionalEvent(token, source_index);
+                const event = try self.positionalEvent(token, source_index);
+                return event;
             }
             if (std.mem.eql(u8, token, "--")) {
                 self.flags_stopped = true;
                 continue;
             }
             if (std.mem.eql(u8, token, "-")) {
-                return try self.positionalEvent(token, source_index);
+                const event = try self.positionalEvent(token, source_index);
+                return event;
             }
             if (std.mem.startsWith(u8, token, "--")) {
-                return try self.longEvent(token, source_index);
+                const event = try self.longEvent(token, source_index);
+                return event;
             }
             if (std.mem.startsWith(u8, token, "-")) {
                 if (isNegativeNumber(token)) {
                     if (!self.hasShort(token[1])) {
-                        return try self.positionalEvent(token, source_index);
+                        const event = try self.positionalEvent(token, source_index);
+                        return event;
                     }
                 }
-                return try self.startShortEvents(token, source_index);
+                const event = try self.startShortEvents(token, source_index);
+                return event;
             }
-            return try self.wordEvent(token, source_index);
+            const event = try self.wordEvent(token, source_index);
+            return event;
         }
         return null;
     }
@@ -290,7 +298,7 @@ pub const Parser = struct {
 
     fn longEvent(self: *Parser, token: []const u8, source_index: u32) Error!Event {
         const spelling_and_value = token[2..];
-        const equal_index = std.mem.indexOfScalar(u8, spelling_and_value, '=');
+        const equal_index = std.mem.findScalar(u8, spelling_and_value, '=');
         const spelling = if (equal_index) |index|
             spelling_and_value[0..index]
         else
@@ -609,7 +617,13 @@ pub fn Variants(comptime U: type) type {
         .@"align" = null,
         .default_value_ptr = &variant_default,
     });
-    return @Struct(.auto, null, type_info.@"union".field_names, &variant_types, &variant_attributes);
+    return @Struct(
+        .auto,
+        null,
+        type_info.@"union".field_names,
+        &variant_types,
+        &variant_attributes,
+    );
 }
 
 pub fn VariantsMeta(comptime U: type) type {

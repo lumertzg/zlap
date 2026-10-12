@@ -18,7 +18,8 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    exe.root_module.addImport("zlap", zlap_module);
+    const root_module = exe.root_module;
+    root_module.addImport("zlap", zlap_module);
 
     b.installArtifact(exe);
 
@@ -26,7 +27,10 @@ pub fn build(b: *std.Build) void {
     run_cmd.step.dependOn(b.getInstallStep());
     run_cmd.addPassthruArgs();
 
-    const run_step = b.step("run", "Run the application");
+    const run_step = b.step(
+        "run",
+        "Run the application",
+    );
     run_step.dependOn(&run_cmd.step);
 
     const test_step = b.step("test", "Run unit tests");
@@ -40,7 +44,15 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(module_tests).step);
 
     const fmt_step = b.step("fmt", "Check code formatting");
-    const fmt_check = b.addFmt(.{ .paths = &.{ b.path("src"), b.path("build.zig"), b.path("build.zig.zon") }, .check = true });
+    const fmt_check = b.addFmt(.{
+        .paths = &.{
+            b.path("src"),
+            b.path("build.zig"),
+            b.path("build.zig.zon"),
+            b.path(".ziglint.zon"),
+        },
+        .check = true,
+    });
     fmt_step.dependOn(&fmt_check.step);
     test_step.dependOn(fmt_step);
 }

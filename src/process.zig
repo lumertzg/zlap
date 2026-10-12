@@ -32,12 +32,12 @@ pub fn parse(comptime T: type, init: std.process.Init) T {
     var stderr = std.Io.File.stderr().writerStreaming(init.io, &stderr_buffer);
 
     if (handleCompletion(T, argv, &stdout.interface, &stderr.interface) catch {
-        stdout.interface.flush() catch {};
-        stderr.interface.flush() catch {};
+        flushBeforeExit(&stdout.interface);
+        flushBeforeExit(&stderr.interface);
         std.process.exit(2);
     }) |status| {
-        stdout.interface.flush() catch {};
-        stderr.interface.flush() catch {};
+        flushBeforeExit(&stdout.interface);
+        flushBeforeExit(&stderr.interface);
         std.process.exit(status);
     }
 
@@ -54,15 +54,15 @@ pub fn parse(comptime T: type, init: std.process.Init) T {
         &stdout.interface,
         &stderr.interface,
     ) catch {
-        stdout.interface.flush() catch {};
-        stderr.interface.flush() catch {};
+        flushBeforeExit(&stdout.interface);
+        flushBeforeExit(&stderr.interface);
         std.process.exit(2);
     };
     switch (handled) {
         .value => |value| return value,
         .exit => |status| {
-            stdout.interface.flush() catch {};
-            stderr.interface.flush() catch {};
+            flushBeforeExit(&stdout.interface);
+            flushBeforeExit(&stderr.interface);
             std.process.exit(status);
         },
     }
@@ -183,8 +183,13 @@ fn argvFromWords(words: []const [:0]const u8) schema.Argv {
 fn writeOutOfMemory(io: std.Io) void {
     var stderr_buffer: [256]u8 = undefined;
     var stderr = std.Io.File.stderr().writerStreaming(io, &stderr_buffer);
-    defer stderr.interface.flush() catch {};
-    stderr.interface.writeAll("error: out of memory\n") catch {};
+    defer flushBeforeExit(&stderr.interface);
+    stderr.interface.writeAll("error: out of memory\n") catch return;
+}
+
+/// Preserves the selected process exit status if a final stream flush fails.
+fn flushBeforeExit(writer: *std.Io.Writer) void {
+    writer.flush() catch return;
 }
 
 test "handleResult returns parsed value" {

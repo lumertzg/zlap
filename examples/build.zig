@@ -19,7 +19,12 @@ pub fn build(b: *std.Build) void {
 
     const fmt_step = b.step("fmt", "Check code formatting");
     const fmt_check = b.addFmt(.{
-        .paths = &.{ b.path("basic"), b.path("nested"), b.path("build.zig"), b.path("build.zig.zon") },
+        .paths = &.{
+            b.path("basic"),
+            b.path("nested"),
+            b.path("build.zig"),
+            b.path("build.zig.zon"),
+        },
         .check = true,
     });
     fmt_step.dependOn(&fmt_check.step);

@@ -31,7 +31,8 @@ pub fn completionScript(comptime T: type, comptime shell: Shell) []const u8 {
         .bash => std.fmt.comptimePrint(
             \\_zlap_complete() {{
             \\    local IFS=$'\\n'
-            \\    COMPREPLY=($("{s}" __complete --shell bash --line "$COMP_LINE" --cursor "$COMP_POINT"))
+            \\    local l="$COMP_LINE"
+            \\    COMPREPLY=($("{s}" __complete --shell bash --line "$l" --cursor "$COMP_POINT"))
             \\}}
             \\complete -F _zlap_complete "{s}"
             \\
@@ -39,27 +40,33 @@ pub fn completionScript(comptime T: type, comptime shell: Shell) []const u8 {
         .zsh => std.fmt.comptimePrint(
             \\_zlap_complete() {{
             \\    local -a candidates
-            \\    candidates=("${{(@f)$("{s}" __complete --shell zsh --line "$BUFFER" --cursor "$CURSOR")}}")
+            \\    local l="$BUFFER" c="$CURSOR"
+            \\    candidates=("${{(@f)$("{s}" __complete --shell zsh --line "$l" --cursor "$c")}}")
             \\    _describe 'values' candidates
             \\}}
             \\compdef _zlap_complete "{s}"
             \\
         , .{ bin, bin }),
         .fish => std.fmt.comptimePrint(
-            \\complete -c "{s}" -f -a '({s} __complete --shell fish --line (commandline -cp) --cursor (commandline -C))'
+            \\complete -c "{s}" -f -a '({s} __complete --shell fish --line \
+            \\    (commandline -cp) --cursor (commandline -C))'
             \\
         , .{ bin, bin }),
         .powershell => std.fmt.comptimePrint(
             \\Register-ArgumentCompleter -Native -CommandName '{s}' -ScriptBlock {{
             \\    param($wordToComplete, $commandAst, $cursorPosition)
-            \\    & '{s}' __complete --shell powershell --line $commandAst.ToString() --cursor $cursorPosition |
-            \\        ForEach-Object {{ [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }}
+            \\    & '{s}' __complete --shell powershell --line $commandAst.ToString() `
+            \\        --cursor $cursorPosition |
+            \\        ForEach-Object {{ [System.Management.Automation.CompletionResult]::new(
+            \\            $_, $_, 'ParameterValue', $_
+            \\        ) }}
             \\}}
             \\
         , .{ bin, bin }),
         .nu => std.fmt.comptimePrint(
             \\def "nu-complete {s}" [context: string] {{
-            \\    ^{s} __complete --shell nu --line $context --cursor ($context | str length)
+            \\    let cursor = ($context | str length)
+            \\    ^{s} __complete --shell nu --line $context --cursor $cursor
             \\}}
             \\
         , .{ bin, bin }),
@@ -221,7 +228,7 @@ fn escapeByte(shell: Shell) u8 {
     };
 }
 
-const AttachedValue = struct {
+const AttachedArgument = struct {
     id: schema.FlagId,
     prefix: []const u8,
 };
@@ -230,11 +237,11 @@ fn attachedValue(
     table: *const schema.Table,
     command: schema.CmdId,
     current: []const u8,
-) ?AttachedValue {
+) ?AttachedArgument {
     std.debug.assert(command < table.scopes.len);
     if (std.mem.startsWith(u8, current, "--")) {
         const rest = current[2..];
-        const equal_index = std.mem.indexOfScalar(u8, rest, '=') orelse return null;
+        const equal_index = std.mem.findScalar(u8, rest, '=') orelse return null;
         const name = findName(
             table.scopes[command],
             .long,
@@ -249,7 +256,7 @@ fn attachedValue(
         };
     }
     if (current.len < 4 or current[0] != '-') return null;
-    const equal_index = std.mem.indexOfScalar(u8, current, '=') orelse return null;
+    const equal_index = std.mem.findScalar(u8, current, '=') orelse return null;
     if (equal_index != 2) return null;
     const name = findName(table.scopes[command], .short, current[1..2]) orelse return null;
     return switch (name.target) {
@@ -346,8 +353,8 @@ fn writeEnumValuesForBinding(
         const info = comptime structInfo(Current);
         inline for (info.field_names, info.field_types) |field_name, Field| {
             if (std.mem.eql(u8, target.field, field_name)) {
-                const Enum = enumType(Field) orelse return false;
-                inline for (@typeInfo(Enum).@"enum".field_names) |item_name| {
+                const enum_type = enumType(Field) orelse return false;
+                inline for (@typeInfo(enum_type).@"enum".field_names) |item_name| {
                     if (kebabStartsWith(item_name, prefix)) {
                         try writeKebab(item_name, writer);
                         try writer.writeByte('\n');
@@ -359,9 +366,9 @@ fn writeEnumValuesForBinding(
         unreachable;
     }
 
-    const Command = commandFieldType(Current) orelse return false;
-    const Union = commandUnion(Command) orelse unreachable;
-    const union_info = comptime unionInfo(Union);
+    const command_type = commandFieldType(Current) orelse return false;
+    const union_type = commandUnion(command_type) orelse unreachable;
+    const union_info = comptime unionInfo(union_type);
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         const child = comptime nodeId(Root, current, variant_name);
         if (isDescendant(compiled.nodes, target.command, child)) {

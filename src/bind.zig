@@ -357,22 +357,42 @@ fn applyEnvironment(
     inline for (command_info.field_names, command_info.field_types) |command_name, Command| {
         if (comptime !isCommandField(Command)) continue;
         const selected = context.path.ids[depth + 1];
-        const Union = commandUnion(Command);
+        const union_type = CommandUnion(Command);
         if (comptime isOptionalCommand(Command)) {
             if (@field(value.*, command_name)) |*selected_value| {
-                return applyEnvironmentInVariant(Root, Union, selected_value, context, env, argv, current, depth, selected);
+                return applyEnvironmentInVariant(
+                    Root,
+                    union_type,
+                    selected_value,
+                    context,
+                    env,
+                    argv,
+                    current,
+                    depth,
+                    selected,
+                );
             }
             unreachable;
         }
-        return applyEnvironmentInVariant(Root, Union, &@field(value.*, command_name), context, env, argv, current, depth, selected);
+        return applyEnvironmentInVariant(
+            Root,
+            union_type,
+            &@field(value.*, command_name),
+            context,
+            env,
+            argv,
+            current,
+            depth,
+            selected,
+        );
     }
     unreachable;
 }
 
 fn applyEnvironmentInVariant(
     comptime Root: type,
-    comptime Union: type,
-    active: *Union,
+    comptime union_type: type,
+    active: *union_type,
     context: *FillContext(Root),
     env: schema.Env,
     argv: schema.Argv,
@@ -605,22 +625,42 @@ fn bindInActiveCommand(
     const info = comptime structInfo(Current);
     inline for (info.field_names, info.field_types) |command_name, Command| {
         if (comptime !isCommandField(Command)) continue;
-        const Union = commandUnion(Command);
+        const union_type = CommandUnion(Command);
         if (comptime isOptionalCommand(Command)) {
             if (@field(current_value.*, command_name)) |*selected| {
-                return bindInSelectedVariant(Root, Union, selected, context, target, field_name, options, current, depth);
+                return bindInSelectedVariant(
+                    Root,
+                    union_type,
+                    selected,
+                    context,
+                    target,
+                    field_name,
+                    options,
+                    current,
+                    depth,
+                );
             }
             unreachable;
         }
-        return bindInSelectedVariant(Root, Union, &@field(current_value.*, command_name), context, target, field_name, options, current, depth);
+        return bindInSelectedVariant(
+            Root,
+            union_type,
+            &@field(current_value.*, command_name),
+            context,
+            target,
+            field_name,
+            options,
+            current,
+            depth,
+        );
     }
     unreachable;
 }
 
 fn bindInSelectedVariant(
     comptime Root: type,
-    comptime Union: type,
-    selected: *Union,
+    comptime union_type: type,
+    selected: *union_type,
     context: *FillContext(Root),
     target: schema.CmdId,
     comptime field_name: []const u8,
@@ -684,14 +724,14 @@ fn updateCommand(
     try updateInActiveCommand(
         T,
         T,
+        0,
+        0,
         allocator,
         value,
         path,
         new_commands,
         active_commands,
         target,
-        0,
-        0,
     );
     path.depth += 1;
     path.ids[path.depth] = target;
@@ -700,39 +740,39 @@ fn updateCommand(
 fn updateInActiveCommand(
     comptime Root: type,
     comptime Current: type,
+    comptime current: schema.CmdId,
+    comptime depth: usize,
     allocator: std.mem.Allocator,
     value: *Current,
     path: *const ActivePath(Root),
     new_commands: *NewCommands(Root),
     active_commands: *ActiveCommands,
     target: schema.CmdId,
-    comptime current: schema.CmdId,
-    comptime depth: usize,
 ) schema.Error!void {
     if (depth == path.depth) {
         std.debug.assert(current == path.ids[depth]);
         const command = commandField(Current) orelse unreachable;
-        const Union = commandUnion(command.type);
-        const union_info = comptime unionInfo(Union);
+        const union_type = CommandUnion(command.type);
+        const union_info = comptime unionInfo(union_type);
         inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
             const child = comptime nodeIdForVariant(Root, current, variant_name);
             if (target == child) {
                 if (!new_commands.isSet(current) and commandHasVariant(
                     command.type,
                     @field(value.*, command.name),
-                    Union,
+                    union_type,
                     variant_name,
                 )) return;
 
                 if (!new_commands.isSet(current)) {
                     try active_commands.capture(
-                        allocator,
                         command.type,
+                        allocator,
                         &@field(value.*, command.name),
                     );
                 }
                 @field(value.*, command.name) = @unionInit(
-                    Union,
+                    union_type,
                     variant_name,
                     defaults(Variant),
                 );
@@ -744,49 +784,49 @@ fn updateInActiveCommand(
     }
 
     const command = commandField(Current) orelse unreachable;
-    const Union = commandUnion(command.type);
+    const union_type = CommandUnion(command.type);
     if (comptime isOptionalCommand(command.type)) {
         if (@field(value.*, command.name)) |*selected| {
             return updateInSelectedVariant(
                 Root,
-                Union,
+                union_type,
+                current,
+                depth,
                 allocator,
                 selected,
                 path,
                 new_commands,
                 active_commands,
                 target,
-                current,
-                depth,
             );
         }
         unreachable;
     }
     return updateInSelectedVariant(
         Root,
-        Union,
+        union_type,
+        current,
+        depth,
         allocator,
         &@field(value.*, command.name),
         path,
         new_commands,
         active_commands,
         target,
-        current,
-        depth,
     );
 }
 
 fn updateInSelectedVariant(
     comptime Root: type,
-    comptime Union: type,
+    comptime union_type: type,
+    comptime current: schema.CmdId,
+    comptime depth: usize,
     allocator: std.mem.Allocator,
-    selected: *Union,
+    selected: *union_type,
     path: *const ActivePath(Root),
     new_commands: *NewCommands(Root),
     active_commands: *ActiveCommands,
     target: schema.CmdId,
-    comptime current: schema.CmdId,
-    comptime depth: usize,
 ) schema.Error!void {
     switch (selected.*) {
         inline else => |*payload, tag| {
@@ -795,14 +835,14 @@ fn updateInSelectedVariant(
                 return updateInActiveCommand(
                     Root,
                     @TypeOf(payload.*),
+                    child,
+                    depth + 1,
                     allocator,
                     payload,
                     path,
                     new_commands,
                     active_commands,
                     target,
-                    child,
-                    depth + 1,
                 );
             }
             unreachable;
@@ -813,10 +853,10 @@ fn updateInSelectedVariant(
 fn commandHasVariant(
     comptime Command: type,
     command: Command,
-    comptime Union: type,
+    comptime union_type: type,
     comptime variant_name: []const u8,
 ) bool {
-    const tag = @field(std.meta.Tag(Union), variant_name);
+    const tag = @field(std.meta.Tag(union_type), variant_name);
     if (comptime isOptionalCommand(Command)) {
         if (command) |selected| return std.meta.activeTag(selected) == tag;
         return false;
@@ -836,12 +876,12 @@ fn activateInActiveCommand(
     if (depth == path.depth) {
         std.debug.assert(current == path.ids[depth]);
         const command = commandField(Current) orelse unreachable;
-        const Union = commandUnion(command.type);
-        const union_info = comptime unionInfo(Union);
+        const union_type = CommandUnion(command.type);
+        const union_info = comptime unionInfo(union_type);
         inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
             const child = comptime nodeIdForVariant(Root, current, variant_name);
             if (target == child) {
-                const selected = @unionInit(Union, variant_name, defaults(Variant));
+                const selected = @unionInit(union_type, variant_name, defaults(Variant));
                 @field(value.*, command.name) = selected;
                 return;
             }
@@ -850,12 +890,12 @@ fn activateInActiveCommand(
     }
 
     const command = commandField(Current) orelse unreachable;
-    const Union = commandUnion(command.type);
+    const union_type = CommandUnion(command.type);
     if (comptime isOptionalCommand(command.type)) {
         if (@field(value.*, command.name)) |*selected| {
             return activateInSelectedVariant(
                 Root,
-                Union,
+                union_type,
                 selected,
                 path,
                 target,
@@ -867,7 +907,7 @@ fn activateInActiveCommand(
     }
     return activateInSelectedVariant(
         Root,
-        Union,
+        union_type,
         &@field(value.*, command.name),
         path,
         target,
@@ -878,8 +918,8 @@ fn activateInActiveCommand(
 
 fn activateInSelectedVariant(
     comptime Root: type,
-    comptime Union: type,
-    selected: *Union,
+    comptime union_type: type,
+    selected: *union_type,
     path: *const ActivePath(Root),
     target: schema.CmdId,
     comptime current: schema.CmdId,
@@ -940,12 +980,12 @@ fn captureExternalInActiveCommand(
 
     std.debug.assert(depth < context.path.depth);
     const command = commandField(Current) orelse unreachable;
-    const Union = commandUnion(command.type);
+    const union_type = CommandUnion(command.type);
     if (comptime isOptionalCommand(command.type)) {
         if (@field(value.*, command.name)) |*selected| {
             return captureExternalInSelectedVariant(
                 Root,
-                Union,
+                union_type,
                 selected,
                 context,
                 target,
@@ -959,7 +999,7 @@ fn captureExternalInActiveCommand(
     }
     return captureExternalInSelectedVariant(
         Root,
-        Union,
+        union_type,
         &@field(value.*, command.name),
         context,
         target,
@@ -972,8 +1012,8 @@ fn captureExternalInActiveCommand(
 
 fn captureExternalInSelectedVariant(
     comptime Root: type,
-    comptime Union: type,
-    selected: *Union,
+    comptime union_type: type,
+    selected: *union_type,
     context: *FillContext(Root),
     target: schema.CmdId,
     argv: schema.Argv,
@@ -1072,7 +1112,7 @@ fn bindScalar(
                 if (slot.* != maximum) slot.* += 1;
                 return;
             }
-            if (std.mem.indexOfScalar(u8, text, '_') != null) return error.InvalidValue;
+            if (std.mem.findScalar(u8, text, '_') != null) return error.InvalidValue;
             slot.* = std.fmt.parseInt(T, text, 10) catch return error.InvalidValue;
         },
         .float => {
@@ -1111,9 +1151,9 @@ fn appendList(
     const pointer = @typeInfo(T).pointer;
     const Element = pointer.child;
     const list = try active_lists.getOrCreate(
+        T,
         allocator,
         id,
-        T,
         slot,
         isDefaultList(T, slot.*, default_value_ptr),
     );
@@ -1155,13 +1195,14 @@ const ActiveLists = struct {
 
     fn deinit(self: *ActiveLists, allocator: std.mem.Allocator) void {
         self.entries.deinit(allocator);
+        self.* = undefined;
     }
 
     fn getOrCreate(
         self: *ActiveLists,
+        comptime T: type,
         allocator: std.mem.Allocator,
         id: ?schema.FlagId,
-        comptime T: type,
         slot: *T,
         original_is_default: bool,
     ) error{OutOfMemory}!*ActiveList {
@@ -1208,6 +1249,7 @@ const ActiveCommands = struct {
     fn deinit(self: *ActiveCommands, allocator: std.mem.Allocator) void {
         for (self.entries.items) |*entry| entry.discard(allocator, entry);
         self.entries.deinit(allocator);
+        self.* = undefined;
     }
 
     fn commit(self: *ActiveCommands, allocator: std.mem.Allocator) void {
@@ -1218,8 +1260,8 @@ const ActiveCommands = struct {
 
     fn capture(
         self: *ActiveCommands,
-        allocator: std.mem.Allocator,
         comptime T: type,
+        allocator: std.mem.Allocator,
         slot: *T,
     ) error{OutOfMemory}!void {
         const opaque_slot: *anyopaque = @ptrCast(slot);
@@ -1381,18 +1423,25 @@ fn isDefaultList(
 
 fn releaseOwnedLists(comptime T: type, allocator: std.mem.Allocator, value: *const T) void {
     switch (@typeInfo(T)) {
-        .@"struct" => inline for (structInfo(T).field_names, structInfo(T).field_types, structInfo(T).field_attrs) |field_name, Field, attrs| {
-            if (comptime isList(Field)) {
-                releaseOwnedList(
-                    Field,
-                    allocator,
-                    @field(value.*, field_name),
-                    attrs.default_value_ptr,
-                );
-                continue;
-            }
-            if (comptime isCommandField(Field)) {
-                releaseOwnedLists(Field, allocator, &@field(value.*, field_name));
+        .@"struct" => {
+            const info = structInfo(T);
+            inline for (
+                info.field_names,
+                info.field_types,
+                info.field_attrs,
+            ) |field_name, Field, attrs| {
+                if (comptime isList(Field)) {
+                    releaseOwnedList(
+                        Field,
+                        allocator,
+                        @field(value.*, field_name),
+                        attrs.default_value_ptr,
+                    );
+                    continue;
+                }
+                if (comptime isCommandField(Field)) {
+                    releaseOwnedLists(Field, allocator, &@field(value.*, field_name));
+                }
             }
         },
         .@"union" => releaseOwnedVariantLists(T, allocator, value),
@@ -1415,9 +1464,9 @@ fn releaseOwnedList(
 }
 
 fn releaseOwnedVariantLists(
-    comptime Union: type,
+    comptime union_type: type,
     allocator: std.mem.Allocator,
-    selected: *const Union,
+    selected: *const union_type,
 ) void {
     switch (selected.*) {
         inline else => |*payload| releaseOwnedLists(@TypeOf(payload.*), allocator, payload),
@@ -1426,7 +1475,8 @@ fn releaseOwnedVariantLists(
 
 fn isList(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .pointer => |pointer| pointer.size == .slice and pointer.attrs.@"const" and pointer.child != u8,
+        .pointer => |pointer| pointer.size == .slice and
+            pointer.attrs.@"const" and pointer.child != u8,
         else => false,
     };
 }
@@ -1449,13 +1499,13 @@ fn finishActivePath(
 
     if (depth == path.depth) return;
     const command = commandField(Current) orelse unreachable;
-    const Union = commandUnion(command.type);
+    const union_type = CommandUnion(command.type);
     const selected = path.ids[depth + 1];
     if (comptime isOptionalCommand(command.type)) {
         if (@field(value.*, command.name)) |*active| {
             return finishActivePathInVariant(
                 Root,
-                Union,
+                union_type,
                 active,
                 path,
                 seen,
@@ -1470,7 +1520,7 @@ fn finishActivePath(
     }
     return finishActivePathInVariant(
         Root,
-        Union,
+        union_type,
         &@field(value.*, command.name),
         path,
         seen,
@@ -1484,8 +1534,8 @@ fn finishActivePath(
 
 fn finishActivePathInVariant(
     comptime Root: type,
-    comptime Union: type,
-    active: *const Union,
+    comptime union_type: type,
+    active: *const union_type,
     path: *const ActivePath(Root),
     seen: Seen(Root),
     diagnostic: *schema.Diagnostic,
@@ -1627,7 +1677,11 @@ fn checkNewRequiredInCommand(
     if (comptime Current == schema.ExternalCommand) return;
     if (new_commands.isSet(current)) {
         const info = comptime structInfo(Current);
-        inline for (info.field_names, info.field_types, info.field_attrs) |field_name, Field, attrs| {
+        inline for (
+            info.field_names,
+            info.field_types,
+            info.field_attrs,
+        ) |field_name, Field, attrs| {
             if (comptime !isCommandField(Field)) {
                 if (attrs.default_value_ptr == null) {
                     if (!seen.isSet(bindingId(Root, current, field_name))) {
@@ -1657,13 +1711,13 @@ fn checkNewRequiredInCommand(
         return;
     }
 
-    const Union = commandUnion(command.type);
+    const union_type = CommandUnion(command.type);
     const selected = path.ids[depth + 1];
     if (comptime isOptionalCommand(command.type)) {
         if (@field(value.*, command.name)) |*active| {
             return checkNewRequiredInVariant(
                 Root,
-                Union,
+                union_type,
                 active,
                 path,
                 seen,
@@ -1679,7 +1733,7 @@ fn checkNewRequiredInCommand(
     }
     return checkNewRequiredInVariant(
         Root,
-        Union,
+        union_type,
         &@field(value.*, command.name),
         path,
         seen,
@@ -1694,8 +1748,8 @@ fn checkNewRequiredInCommand(
 
 fn checkNewRequiredInVariant(
     comptime Root: type,
-    comptime Union: type,
-    active: *const Union,
+    comptime union_type: type,
+    active: *const union_type,
     path: *const ActivePath(Root),
     seen: Seen(Root),
     new_commands: NewCommands(Root),
@@ -1764,9 +1818,9 @@ fn checkRequiredInCommand(
         return;
     }
 
-    const Union = commandUnion(command.type);
+    const union_type = CommandUnion(command.type);
     const selected = path.ids[depth + 1];
-    const union_info = comptime unionInfo(Union);
+    const union_info = comptime unionInfo(union_type);
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         const child = comptime nodeIdForVariant(Root, current, variant_name);
         if (selected == child) {
@@ -1856,7 +1910,7 @@ fn isOptionalCommand(comptime T: type) bool {
     return @typeInfo(T) == .optional;
 }
 
-fn commandUnion(comptime T: type) type {
+fn CommandUnion(comptime T: type) type {
     return declaration.commandUnion(T) orelse
         @compileError("zlap command fields must be tagged unions");
 }
@@ -2285,7 +2339,9 @@ test "parseFrom enforces active command relationships and validation hooks" {
     const Validated = struct {
         enabled: bool = false,
 
-        pub fn validate(self: *const @This(), diag: *schema.Diagnostic) error{ParseFailed}!void {
+        const Self = @This();
+
+        pub fn validate(self: *const Self, diag: *schema.Diagnostic) error{ParseFailed}!void {
             if (!self.enabled) return;
             diag.* = .{ .kind = .invalid_value };
             return error.ParseFailed;
@@ -2407,7 +2463,9 @@ test "parseFrom binds optional and custom scalar fields on the active path" {
 
         pub const parse_arg_expected = "a duration in seconds";
 
-        pub fn parseArg(text: []const u8) error{InvalidValue}!@This() {
+        const Self = @This();
+
+        pub fn parseArg(text: []const u8) error{InvalidValue}!Self {
             return .{ .seconds = std.fmt.parseInt(u16, text, 10) catch return error.InvalidValue };
         }
     };
@@ -2458,7 +2516,9 @@ test "untagged unions with parseArg remain custom scalar fields" {
     const Duration = union {
         seconds: u16,
 
-        pub fn parseArg(text: []const u8) error{InvalidValue}!@This() {
+        const Self = @This();
+
+        pub fn parseArg(text: []const u8) error{InvalidValue}!Self {
             return .{ .seconds = std.fmt.parseInt(u16, text, 10) catch return error.InvalidValue };
         }
     };
