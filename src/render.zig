@@ -75,9 +75,9 @@ fn writeHelpForNode(
         return writeCommandHelp(Root, Current, current, writer);
     }
 
-    const Command = commandFieldType(Current) orelse unreachable;
-    const Union = commandUnion(Command) orelse unreachable;
-    const union_info = comptime unionInfo(Union);
+    const command_type = commandFieldType(Current) orelse unreachable;
+    const union_type = commandUnion(command_type) orelse unreachable;
+    const union_info = comptime unionInfo(union_type);
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         const child = comptime nodeId(Root, current, variant_name) orelse unreachable;
         if (isDescendant(compiled.nodes, command, child)) {
@@ -175,7 +175,7 @@ fn writePositionals(comptime T: type, writer: *std.Io.Writer) std.Io.Writer.Erro
         if (comptime isCommandField(Field)) continue;
         const options = comptime @field(meta.fields, field_name);
         if (comptime !options.positional or options.hide) continue;
-        try writePositionalRow(field_name, Field, options, writer);
+        try writePositionalRow(Field, field_name, options, writer);
     }
 }
 
@@ -189,7 +189,7 @@ fn writeLocalOptions(comptime T: type, writer: *std.Io.Writer) std.Io.Writer.Err
         if (comptime isCommandField(Field)) continue;
         const options = comptime @field(meta.fields, field_name);
         if (comptime options.positional or options.hide) continue;
-        try writeOptionRow(field_name, Field, options, writer);
+        try writeOptionRow(Field, field_name, options, writer);
     }
 }
 
@@ -216,9 +216,9 @@ fn writeAncestorGlobals(
 ) std.Io.Writer.Error!void {
     if (command == current) return;
 
-    const Command = commandFieldType(Ancestor) orelse unreachable;
-    const Union = commandUnion(Command) orelse unreachable;
-    const union_info = comptime unionInfo(Union);
+    const command_type = commandFieldType(Ancestor) orelse unreachable;
+    const union_type = commandUnion(command_type) orelse unreachable;
+    const union_info = comptime unionInfo(union_type);
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         const child = comptime nodeId(Root, current, variant_name) orelse unreachable;
         if (isDescendant(compile.Compiled(Root).nodes, command, child)) {
@@ -244,15 +244,15 @@ fn writeOwnGlobals(
         if (comptime !options.global or options.positional or options.hide) continue;
         const binding = comptime bindingId(Root, current, field_name);
         if (comptime !globalBindingIsVisible(Root, binding, command)) continue;
-        try writeOptionRow(field_name, Field, options, writer);
+        try writeOptionRow(Field, field_name, options, writer);
     }
 }
 
 fn writeCommands(comptime T: type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-    const Command = commandFieldType(T) orelse return;
-    const Union = commandUnion(Command) orelse unreachable;
-    const meta = comptime variantsMeta(Union);
-    const union_info = comptime unionInfo(Union);
+    const command_type = commandFieldType(T) orelse return;
+    const union_type = commandUnion(command_type) orelse unreachable;
+    const meta = comptime variantsMeta(union_type);
+    const union_info = comptime unionInfo(union_type);
     var any = false;
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         if (comptime isExternalVariant(Variant)) continue;
@@ -281,8 +281,8 @@ fn writeCommands(comptime T: type, writer: *std.Io.Writer) std.Io.Writer.Error!v
 }
 
 fn writeOptionRow(
-    comptime field_name: []const u8,
     comptime Field: type,
+    comptime field_name: []const u8,
     comptime options: anytype,
     writer: *std.Io.Writer,
 ) std.Io.Writer.Error!void {
@@ -311,8 +311,8 @@ fn writeOptionRow(
 }
 
 fn writePositionalRow(
-    comptime field_name: []const u8,
     comptime Field: type,
+    comptime field_name: []const u8,
     comptime options: anytype,
     writer: *std.Io.Writer,
 ) std.Io.Writer.Error!void {
@@ -415,8 +415,8 @@ fn writeBindingNameForNode(
     }
 
     if (comptime commandFieldType(Current)) |Command| {
-        const Union = comptime commandUnion(Command) orelse unreachable;
-        const union_info = comptime unionInfo(Union);
+        const union_type = comptime commandUnion(Command) orelse unreachable;
+        const union_info = comptime unionInfo(union_type);
         inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
             const child = comptime nodeId(Root, current, variant_name) orelse unreachable;
             if (isDescendant(compiled.nodes, target, child)) {
@@ -439,10 +439,10 @@ fn hasVisibleOptions(comptime T: type) bool {
 }
 
 fn hasVisibleCommands(comptime T: type) bool {
-    const Command = commandFieldType(T) orelse return false;
-    const Union = commandUnion(Command) orelse unreachable;
-    const meta = comptime variantsMeta(Union);
-    const union_info = comptime unionInfo(Union);
+    const command_type = commandFieldType(T) orelse return false;
+    const union_type = commandUnion(command_type) orelse unreachable;
+    const meta = comptime variantsMeta(union_type);
+    const union_info = comptime unionInfo(union_type);
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         if (comptime isExternalVariant(Variant)) continue;
         if (!@field(meta.variants, variant_name).hide) return true;
@@ -523,9 +523,9 @@ fn bindingIsGlobalForNode(
         unreachable;
     }
 
-    const Command = commandFieldType(Current) orelse unreachable;
-    const Union = commandUnion(Command) orelse unreachable;
-    const union_info = comptime unionInfo(Union);
+    const command_type = commandFieldType(Current) orelse unreachable;
+    const union_type = commandUnion(command_type) orelse unreachable;
+    const union_info = comptime unionInfo(union_type);
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         const child = comptime nodeId(Root, current, variant_name) orelse unreachable;
         if (isDescendant(compiled.nodes, target, child)) {
@@ -553,9 +553,9 @@ fn bindingIsHiddenForNode(
         unreachable;
     }
 
-    const Command = commandFieldType(Current) orelse unreachable;
-    const Union = commandUnion(Command) orelse unreachable;
-    const union_info = comptime unionInfo(Union);
+    const command_type = commandFieldType(Current) orelse unreachable;
+    const union_type = commandUnion(command_type) orelse unreachable;
+    const union_info = comptime unionInfo(union_type);
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         const child = comptime nodeId(Root, current, variant_name) orelse unreachable;
         if (isDescendant(compiled.nodes, target, child)) {
@@ -802,7 +802,7 @@ test "writeHelp renders generated one-of switches and optional boolean switches"
         if (binding > 1 or name.kind != .long) continue;
 
         var expected: [32]u8 = undefined;
-        const flag = try std.fmt.bufPrint(&expected, "--{s}", .{name.spelling});
+        const flag = try std.mem.print(&expected, "--{s}", .{name.spelling});
         try std.testing.expect(std.mem.indexOf(u8, output.written(), flag) != null);
     }
     try std.testing.expect(std.mem.indexOf(u8, output.written(), "--format") == null);

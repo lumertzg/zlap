@@ -47,7 +47,7 @@ const JsonWriter = struct {
 
     fn number(self: *JsonWriter, value: usize) void {
         var digits: [std.fmt.count("{}", .{std.math.maxInt(usize)})]u8 = undefined;
-        const text = std.fmt.bufPrint(&digits, "{}", .{value}) catch unreachable;
+        const text = std.mem.print(&digits, "{}", .{value}) catch unreachable;
         self.write(text);
     }
 
@@ -123,8 +123,8 @@ fn writeCommand(
     writer.write("]}");
 
     if (comptime commandFieldType(Current)) |Command| {
-        const Union = commandUnion(Command) orelse unreachable;
-        const union_info = unionInfo(Union);
+        const union_type = commandUnion(Command) orelse unreachable;
+        const union_info = unionInfo(union_type);
         inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
             if (isExternalVariant(Variant)) continue;
             writeCommand(
@@ -162,8 +162,8 @@ fn writeBindings(
                     writeBinding(
                         Root,
                         binding_id,
-                        field_name,
                         Field,
+                        field_name,
                         options,
                         kebabCase(tag_name),
                         false,
@@ -175,8 +175,8 @@ fn writeBindings(
                 writeBinding(
                     Root,
                     binding_id,
-                    field_name,
                     Field,
+                    field_name,
                     options,
                     options.long orelse kebabCase(field_name),
                     positional,
@@ -192,8 +192,8 @@ fn writeBindings(
 fn writeBinding(
     comptime Root: type,
     binding_id: schema.FlagId,
-    comptime field_name: []const u8,
     comptime Field: type,
+    comptime field_name: []const u8,
     comptime options: anytype,
     comptime name: []const u8,
     comptime positional: bool,
@@ -263,10 +263,10 @@ fn writeSubcommands(
     node_id: schema.CmdId,
     writer: *JsonWriter,
 ) void {
-    const Command = commandFieldType(Current) orelse return;
-    const Union = commandUnion(Command) orelse unreachable;
-    const meta = variantsMeta(Union);
-    const union_info = unionInfo(Union);
+    const command_type = commandFieldType(Current) orelse return;
+    const union_type = commandUnion(command_type) orelse unreachable;
+    const meta = variantsMeta(union_type);
+    const union_info = unionInfo(union_type);
     var first = true;
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         if (isExternalVariant(Variant)) continue;
@@ -288,7 +288,7 @@ fn writeSubcommands(
 }
 
 fn writeDefaultSubcommand(comptime T: type, writer: *JsonWriter) void {
-    const Command = comptime commandFieldType(T) orelse {
+    const command_type = comptime commandFieldType(T) orelse {
         writer.write("null");
         return;
     };
@@ -296,7 +296,7 @@ fn writeDefaultSubcommand(comptime T: type, writer: *JsonWriter) void {
         writer.write("null");
         return;
     };
-    const meta = variantsMeta(commandUnion(Command) orelse unreachable);
+    const meta = variantsMeta(commandUnion(command_type) orelse unreachable);
     const name = @tagName(default_variant);
     writer.string(@field(meta.variants, name).name orelse kebabCase(name));
 }
@@ -398,7 +398,7 @@ test "spec lists generated one-of switches and optional boolean switches" {
         if (binding > 1 or name.kind != .long) continue;
 
         var expected: [40]u8 = undefined;
-        const field = try std.fmt.bufPrint(&expected, "\"long\":\"{s}\"", .{name.spelling});
+        const field = try std.mem.print(&expected, "\"long\":\"{s}\"", .{name.spelling});
         try std.testing.expect(std.mem.indexOf(u8, result, field) != null);
     }
     try std.testing.expect(std.mem.indexOf(u8, result, "\"long\":\"format\"") == null);

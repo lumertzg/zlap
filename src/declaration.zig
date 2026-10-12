@@ -41,12 +41,18 @@ pub fn commandFieldType(comptime T: type) ?type {
 }
 
 pub fn commandMeta(comptime T: type) schema.Meta(T) {
-    if (@hasDecl(T, "meta")) return T.meta;
+    if (@hasDecl(T, "meta")) {
+        const meta = T.meta;
+        return meta;
+    }
     return .{};
 }
 
 pub fn variantsMeta(comptime T: type) schema.VariantsMeta(T) {
-    if (@hasDecl(T, "meta")) return T.meta;
+    if (@hasDecl(T, "meta")) {
+        const meta = T.meta;
+        return meta;
+    }
     return .{};
 }
 

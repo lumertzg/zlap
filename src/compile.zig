@@ -19,8 +19,8 @@ pub const Binding = struct {
 };
 
 const FieldKind = struct {
-    kind: schema.ValueKind,
-    list_element: ?schema.ValueKind = null,
+    kind: schema.ScalarKind,
+    list_element: ?schema.ScalarKind = null,
 };
 
 const CommandField = struct {
@@ -38,7 +38,7 @@ const Stats = struct {
     max_depth: u16 = 0,
 };
 
-const State = struct {
+const BuildCursor = struct {
     next_node: usize = 1,
     next_binding: usize = 0,
     next_name: usize = 0,
@@ -55,7 +55,7 @@ const BuildNode = struct {
     depth: u16,
 };
 
-const ScopeData = struct {
+const ScopeLayout = struct {
     name_start: usize,
     name_count: usize,
     command_start: usize,
@@ -70,7 +70,7 @@ const ScopeData = struct {
 fn BuildContext(comptime T: type) type {
     return struct {
         data: *TableData(T),
-        state: *State,
+        state: *BuildCursor,
     };
 }
 
@@ -80,7 +80,7 @@ fn TableData(comptime T: type) type {
         nodes: [stats.nodes]Node,
         bindings: [stats.bindings]Binding,
         flags: [stats.bindings]schema.Flag,
-        scope_data: [stats.nodes]ScopeData,
+        scope_data: [stats.nodes]ScopeLayout,
         names: [stats.names]schema.Name,
         commands: [stats.commands]schema.Command,
         positionals: [stats.positionals]schema.FlagId,
@@ -129,7 +129,7 @@ fn buildTableData(comptime T: type) TableData(T) {
 
     const stats = treeStats(T, 0, 0);
     var data: TableData(T) = undefined;
-    var state: State = .{};
+    var state: BuildCursor = .{};
     var no_globals: [0]schema.Name = .{};
     var context: BuildContext(T) = .{ .data = &data, .state = &state };
     buildNode(
@@ -282,9 +282,25 @@ fn buildBindings(
             appendPositional(data.positionals[0..], &state.next_positional, id);
             continue;
         }
-        appendFieldNames(data.names[name_start..], scope_name_count, field_name, Field, options, id, true);
+        appendFieldNames(
+            data.names[name_start..],
+            scope_name_count,
+            Field,
+            field_name,
+            options,
+            id,
+            true,
+        );
         if (options.global) {
-            appendFieldNames(local_globals, local_global_count, field_name, Field, options, id, true);
+            appendFieldNames(
+                local_globals,
+                local_global_count,
+                Field,
+                field_name,
+                options,
+                id,
+                true,
+            );
         }
     }
 }
@@ -391,7 +407,11 @@ fn validateCommand(comptime T: type) void {
         @compileError("zlap does not support repeated_scalar = .error");
     }
 
-    inline for (fields.field_names, fields.field_types, fields.field_attrs) |field_name, Field, attrs| {
+    inline for (
+        fields.field_names,
+        fields.field_types,
+        fields.field_attrs,
+    ) |field_name, Field, attrs| {
         const options = @field(meta.fields, field_name);
         if (isCommandField(Field)) {
             command_count += 1;
@@ -399,7 +419,7 @@ fn validateCommand(comptime T: type) void {
             continue;
         }
 
-        validateField(T, field_name, Field, attrs, options);
+        validateField(T, Field, field_name, attrs, options);
         if (options.positional) {
             if (previous_positional_list and previous_list_max == null) {
                 @compileError("zlap positional lists before another positional require .max");
@@ -529,8 +549,8 @@ fn variantsHaveCollision(comptime U: type) bool {
 
 fn validateField(
     comptime T: type,
-    comptime field_name: []const u8,
     comptime Field: type,
+    comptime field_name: []const u8,
     comptime attrs: std.lang.Type.Struct.FieldAttributes,
     comptime options: anytype,
 ) void {
@@ -663,7 +683,7 @@ fn validateNamedOptions(comptime options: anytype) void {
 fn validateCommandName(comptime name: []const u8) void {
     if (name.len == 0) @compileError("zlap names cannot be empty");
     if (name[0] == '-') @compileError("zlap names are raw and cannot start with '-'");
-    if (std.mem.indexOfScalar(u8, name, '=') != null) {
+    if (std.mem.findScalar(u8, name, '=') != null) {
         @compileError("zlap names and aliases cannot contain '='");
     }
 }
@@ -779,7 +799,7 @@ fn positionalCount(comptime T: type) usize {
 }
 
 fn fieldNameCount(comptime T: type, comptime options: anytype) usize {
-    if (options.one_of_flags) return @typeInfo(scalarType(T)).@"enum".field_names.len;
+    if (options.one_of_flags) return @typeInfo(ScalarType(T)).@"enum".field_names.len;
     var count: usize = 1 + options.aliases.len;
     if (options.short != null) count += 1;
     if (options.negate != null) count += 1;
@@ -789,14 +809,14 @@ fn fieldNameCount(comptime T: type, comptime options: anytype) usize {
 fn appendFieldNames(
     names: []schema.Name,
     count: *usize,
-    comptime field_name: []const u8,
     comptime Field: type,
+    comptime field_name: []const u8,
     comptime options: anytype,
     id: schema.FlagId,
     comptime reject_duplicates: bool,
 ) void {
     if (options.one_of_flags) {
-        inline for (@typeInfo(scalarType(Field)).@"enum".field_names) |tag_name| {
+        inline for (@typeInfo(ScalarType(Field)).@"enum".field_names) |tag_name| {
             appendName(
                 names,
                 count,
@@ -952,7 +972,7 @@ fn isCommandField(comptime T: type) bool {
 
 fn classifyField(comptime T: type) FieldKind {
     if (isOptionalScalar(T)) {
-        const field_kind = classifyNonOptionalField(scalarType(T));
+        const field_kind = classifyNonOptionalField(ScalarType(T));
         if (field_kind.kind == .list) {
             @compileError("zlap optional fields must be scalar values");
         }
@@ -990,7 +1010,7 @@ fn classifyPointer(comptime pointer: std.lang.Type.Pointer) FieldKind {
     };
 }
 
-fn scalarKind(comptime T: type) ?schema.ValueKind {
+fn scalarKind(comptime T: type) ?schema.ScalarKind {
     return switch (@typeInfo(T)) {
         .bool => .boolean,
         .int => |integer| if (integer.signedness == .signed) .signed_integer else .unsigned_integer,
@@ -1012,17 +1032,17 @@ fn isInteger(comptime T: type) bool {
     return @typeInfo(T) == .int;
 }
 
-fn scalarType(comptime T: type) type {
-    return switch (@typeInfo(T)) {
-        .optional => |optional| optional.child,
-        else => T,
-    };
-}
-
 fn isOptionalScalar(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         .optional => |optional| declaration.commandUnion(optional.child) == null,
         else => false,
+    };
+}
+
+fn ScalarType(comptime T: type) type {
+    return switch (@typeInfo(T)) {
+        .optional => |optional| optional.child,
+        else => T,
     };
 }
 
@@ -1042,7 +1062,7 @@ fn validateParseArg(comptime T: type) void {
 }
 
 fn parseArgExpected(comptime T: type) ?[]const u8 {
-    const scalar = scalarType(T);
+    const scalar = ScalarType(T);
     const Scalar = switch (@typeInfo(scalar)) {
         .pointer => |pointer| if (pointer.size == .slice and pointer.child != u8)
             pointer.child
