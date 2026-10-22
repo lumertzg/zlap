@@ -60,6 +60,7 @@ pub fn renderDiagnostic(
         .help => try writer.writeAll("help was requested"),
         .version => try writer.writeAll("version was requested"),
     }
+
     try writer.writeAll("\n\nFor more information, try '--help'.\n");
 }
 
@@ -78,12 +79,14 @@ fn writeHelpForNode(
     const command_type = commandFieldType(Current) orelse unreachable;
     const union_type = commandUnion(command_type) orelse unreachable;
     const union_info = comptime unionInfo(union_type);
+
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         const child = comptime nodeId(Root, current, variant_name) orelse unreachable;
         if (isDescendant(compiled.nodes, command, child)) {
             return writeHelpForNode(Root, Variant, command, writer, child);
         }
     }
+
     unreachable;
 }
 
@@ -122,13 +125,16 @@ fn writeUsage(
     writer: *std.Io.Writer,
 ) std.Io.Writer.Error!void {
     const compiled = compile.Compiled(Root);
+
     try writer.print("Usage: {s}", .{binName(Root)});
+
     for (compiled.nodes, 0..) |_, index| {
         const id: schema.CmdId = @intCast(index);
         if (id != 0 and isAncestor(compiled.nodes, id, command)) {
             try writer.print(" {s}", .{compiled.nodes[index].name});
         }
     }
+
     if (hasVisibleOptions(T)) try writer.writeAll(" [OPTIONS]");
     try writeUsagePositionals(T, writer);
     if (comptime commandFieldType(T)) |Command| {
@@ -143,12 +149,14 @@ fn writeUsage(
             }
         }
     }
+
     try writer.writeByte('\n');
 }
 
 fn writeUsagePositionals(comptime T: type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     const meta = comptime commandMeta(T);
     const info = comptime structInfo(T);
+
     inline for (info.field_names, info.field_types) |field_name, Field| {
         if (comptime isCommandField(Field)) continue;
         const options = comptime @field(meta.fields, field_name);
@@ -163,11 +171,13 @@ fn writePositionals(comptime T: type, writer: *std.Io.Writer) std.Io.Writer.Erro
     const meta = comptime commandMeta(T);
     var any = false;
     const info = comptime structInfo(T);
+
     inline for (info.field_names, info.field_types) |field_name, Field| {
         if (comptime isCommandField(Field)) continue;
         const options = comptime @field(meta.fields, field_name);
         if (comptime options.positional and !options.hide) any = true;
     }
+
     if (!any) return;
 
     try writer.writeAll("\nArguments:\n");
@@ -185,6 +195,7 @@ fn writeLocalOptions(comptime T: type, writer: *std.Io.Writer) std.Io.Writer.Err
     const meta = comptime commandMeta(T);
     try writer.writeAll("\nOptions:\n");
     const info = comptime structInfo(T);
+
     inline for (info.field_names, info.field_types) |field_name, Field| {
         if (comptime isCommandField(Field)) continue;
         const options = comptime @field(meta.fields, field_name);
@@ -219,6 +230,7 @@ fn writeAncestorGlobals(
     const command_type = commandFieldType(Ancestor) orelse unreachable;
     const union_type = commandUnion(command_type) orelse unreachable;
     const union_info = comptime unionInfo(union_type);
+
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         const child = comptime nodeId(Root, current, variant_name) orelse unreachable;
         if (isDescendant(compile.Compiled(Root).nodes, command, child)) {
@@ -226,6 +238,7 @@ fn writeAncestorGlobals(
             return writeAncestorGlobals(Root, Variant, Current, command, writer, child);
         }
     }
+
     unreachable;
 }
 
@@ -238,6 +251,7 @@ fn writeOwnGlobals(
 ) std.Io.Writer.Error!void {
     const meta = comptime commandMeta(Owner);
     const info = comptime structInfo(Owner);
+
     inline for (info.field_names, info.field_types) |field_name, Field| {
         if (comptime isCommandField(Field)) continue;
         const options = comptime @field(meta.fields, field_name);
@@ -254,10 +268,12 @@ fn writeCommands(comptime T: type, writer: *std.Io.Writer) std.Io.Writer.Error!v
     const meta = comptime variantsMeta(union_type);
     const union_info = comptime unionInfo(union_type);
     var any = false;
+
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         if (comptime isExternalVariant(Variant)) continue;
         if (!@field(meta.variants, variant_name).hide) any = true;
     }
+
     if (!any) return;
 
     try writer.writeAll("\nCommands:\n");
@@ -334,6 +350,7 @@ fn writeBindingProblem(
         try writer.print("' {s}", .{problem});
         return;
     }
+
     try writer.writeAll(problem);
 }
 
@@ -387,6 +404,7 @@ fn writeBindingName(
 ) std.Io.Writer.Error!void {
     const compiled = compile.Compiled(T);
     std.debug.assert(binding < compiled.bindings.len);
+
     try writeBindingNameForNode(T, T, binding, writer, 0);
 }
 
@@ -424,17 +442,20 @@ fn writeBindingNameForNode(
             }
         }
     }
+
     unreachable;
 }
 
 fn hasVisibleOptions(comptime T: type) bool {
     const meta = comptime commandMeta(T);
     const info = comptime structInfo(T);
+
     inline for (info.field_names, info.field_types) |field_name, Field| {
         if (comptime isCommandField(Field)) continue;
         const options = comptime @field(meta.fields, field_name);
         if (!options.positional and !options.hide) return true;
     }
+
     return false;
 }
 
@@ -443,15 +464,18 @@ fn hasVisibleCommands(comptime T: type) bool {
     const union_type = commandUnion(command_type) orelse unreachable;
     const meta = comptime variantsMeta(union_type);
     const union_info = comptime unionInfo(union_type);
+
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         if (comptime isExternalVariant(Variant)) continue;
         if (!@field(meta.variants, variant_name).hide) return true;
     }
+
     return false;
 }
 
 fn hasVisibleInheritedGlobals(comptime Root: type, comptime command: schema.CmdId) bool {
     const compiled = compile.Compiled(Root);
+
     inline for (compiled.bindings, 0..) |binding, index| {
         if (comptime !isAncestor(compiled.nodes, binding.command, command)) continue;
         if (comptime binding.command == command) continue;
@@ -460,6 +484,7 @@ fn hasVisibleInheritedGlobals(comptime Root: type, comptime command: schema.CmdI
         if (comptime bindingIsHidden(Root, id)) continue;
         if (comptime globalBindingIsVisible(Root, id, command)) return true;
     }
+
     return false;
 }
 
@@ -470,6 +495,7 @@ fn globalBindingIsVisible(
 ) bool {
     const compiled = compile.Compiled(Root);
     const owner = compiled.bindings[binding].command;
+
     inline for (compiled.table.scopes[owner].names) |name| {
         const target = switch (name.target) {
             .action => continue,
@@ -478,6 +504,7 @@ fn globalBindingIsVisible(
         if (target != binding) continue;
         if (!scopeHasBindingName(compiled.table.scopes[command], name, binding)) return false;
     }
+
     return true;
 }
 
@@ -489,11 +516,13 @@ fn scopeHasBindingName(
     for (scope.names) |name| {
         if (name.kind != expected.kind) continue;
         if (!std.mem.eql(u8, name.spelling, expected.spelling)) continue;
+
         return switch (name.target) {
             .action => false,
             .flag => |id| id == binding,
         };
     }
+
     return false;
 }
 
@@ -526,12 +555,14 @@ fn bindingIsGlobalForNode(
     const command_type = commandFieldType(Current) orelse unreachable;
     const union_type = commandUnion(command_type) orelse unreachable;
     const union_info = comptime unionInfo(union_type);
+
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         const child = comptime nodeId(Root, current, variant_name) orelse unreachable;
         if (isDescendant(compiled.nodes, target, child)) {
             return bindingIsGlobalForNode(Root, Variant, binding, child);
         }
     }
+
     unreachable;
 }
 
@@ -556,12 +587,14 @@ fn bindingIsHiddenForNode(
     const command_type = commandFieldType(Current) orelse unreachable;
     const union_type = commandUnion(command_type) orelse unreachable;
     const union_info = comptime unionInfo(union_type);
+
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         const child = comptime nodeId(Root, current, variant_name) orelse unreachable;
         if (isDescendant(compiled.nodes, target, child)) {
             return bindingIsHiddenForNode(Root, Variant, binding, child);
         }
     }
+
     unreachable;
 }
 
@@ -574,6 +607,7 @@ fn bindingId(
         if (binding.command != command) continue;
         if (std.mem.eql(u8, binding.field, field_name)) return @intCast(index);
     }
+
     unreachable;
 }
 
@@ -587,16 +621,19 @@ fn nodeId(
             return @intCast(index);
         }
     }
+
     return null;
 }
 
 fn isAncestor(nodes: []const compile.Node, ancestor: schema.CmdId, command: schema.CmdId) bool {
     var current = command;
     var remaining = nodes.len;
+
     while (remaining > 0) : (remaining -= 1) {
         if (current == ancestor) return true;
         current = nodes[current].parent orelse return false;
     }
+
     unreachable;
 }
 
@@ -617,6 +654,7 @@ fn takesValue(comptime T: type, comptime options: anytype) bool {
         .optional => |optional| optional.child,
         else => T,
     };
+
     return !options.count and @typeInfo(Scalar) != .bool;
 }
 
@@ -666,7 +704,9 @@ test "writeHelp renders root and child commands" {
 
     var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer output.deinit();
+
     try writeHelp(App, 0, &output.writer, .{});
+
     try std.testing.expectEqualStrings(
         "Usage: demo [OPTIONS] [COMMAND]\n" ++
             "\nA demonstration program\n" ++
@@ -677,6 +717,7 @@ test "writeHelp renders root and child commands" {
 
     output.clearRetainingCapacity();
     try writeHelp(App, 1, &output.writer, .{});
+
     try std.testing.expectEqualStrings(
         "Usage: demo run <PATH>\n" ++
             "\nRun one task\n" ++
@@ -703,12 +744,15 @@ test "writeHelp retains globals when child fields are renamed" {
     };
 
     const compiled = compile.Compiled(App);
+
     try std.testing.expectEqualStrings("verbose", compiled.table.scopes[1].names[1].spelling);
     try std.testing.expectEqualStrings("detail", compiled.table.scopes[1].names[0].spelling);
 
     var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer output.deinit();
+
     try writeHelp(App, 1, &output.writer, .{});
+
     try std.testing.expect(
         std.mem.indexOf(u8, output.written(), "Global options:\n  -v, --verbose") != null,
     );
@@ -739,7 +783,9 @@ test "writeHelp renders one command slot for external forwarding" {
 
     var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer output.deinit();
+
     try writeHelp(Required, 0, &output.writer, .{});
+
     try std.testing.expectEqualStrings(
         "Usage: required <COMMAND> [ARGS]...\n" ++
             "\nCommands:\n  run\n" ++
@@ -749,6 +795,7 @@ test "writeHelp renders one command slot for external forwarding" {
 
     output.clearRetainingCapacity();
     try writeHelp(Optional, 0, &output.writer, .{});
+
     try std.testing.expectEqualStrings(
         "Usage: optional [COMMAND [ARGS]...]\n" ++
             "\nCommands:\n  run\n" ++
@@ -764,14 +811,17 @@ test "renderDiagnostic names the failed binding" {
             .output = .{ .short = 'o', .help = "Output file" },
         } };
     };
+
     var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer output.deinit();
+
     try renderDiagnostic(
         App,
         .{ .kind = .missing_value, .binding = 0, .token = "--output" },
         &output.writer,
         .{},
     );
+
     try std.testing.expectEqualStrings(
         "error: option '--output' requires a value\n\nFor more information, try '--help'.\n",
         output.written(),
@@ -792,6 +842,7 @@ test "writeHelp renders generated one-of switches and optional boolean switches"
     const compiled = compile.Compiled(Command);
     var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer output.deinit();
+
     try writeHelp(Command, 0, &output.writer, .{});
 
     for (compiled.table.scopes[0].names) |name| {
@@ -805,6 +856,7 @@ test "writeHelp renders generated one-of switches and optional boolean switches"
         const flag = try std.mem.print(&expected, "--{s}", .{name.spelling});
         try std.testing.expect(std.mem.indexOf(u8, output.written(), flag) != null);
     }
+
     try std.testing.expect(std.mem.indexOf(u8, output.written(), "--format") == null);
     try std.testing.expect(std.mem.indexOf(u8, output.written(), "<FORMAT>") == null);
     try std.testing.expect(std.mem.indexOf(u8, output.written(), "<STATE>") == null);
@@ -825,10 +877,13 @@ test "writeHelp describes default and external subcommands" {
 
     var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer output.deinit();
+
     try writeHelp(DefaultApp, 0, &output.writer, .{});
+
     try std.testing.expect(std.mem.indexOf(u8, output.written(), "default subcommand") != null);
 
     output.clearRetainingCapacity();
     try writeHelp(ExternalApp, 0, &output.writer, .{});
+
     try std.testing.expect(std.mem.indexOf(u8, output.written(), "captured verbatim") != null);
 }

@@ -27,6 +27,7 @@ pub const Error = std.Io.Writer.Error || error{
 /// Returns an installation script that calls the program's hidden `__complete` request.
 pub fn completionScript(comptime T: type, comptime shell: Shell) []const u8 {
     const bin = comptime binName(T);
+
     return comptime switch (shell) {
         .bash => std.fmt.comptimePrint(
             \\_zlap_complete() {{
@@ -104,6 +105,7 @@ pub fn complete(
         &diagnostic,
     );
     var pending_value: ?schema.FlagId = null;
+
     while (true) {
         _ = parser.next() catch |err| {
             if (err == error.ParseFailed and diagnostic.kind == .missing_value) {
@@ -122,6 +124,7 @@ pub fn complete(
     if (pending_value) |binding| {
         if (try writeEnumValues(T, binding, current, writer)) return;
     }
+
     try writeScopeCandidates(
         &compiled.table,
         parser.scope,
@@ -151,6 +154,7 @@ fn splitLine(
     var output_index: usize = 0;
     var word_count: usize = 0;
     var index: usize = 0;
+
     while (index < line.len) : (index += 1) {
         const byte = line[index];
         if (quote) |active_quote| {
@@ -202,17 +206,20 @@ fn splitLine(
             .current = words[word_count - 1],
         };
     }
+
     return .{ .word_count = word_count, .previous_count = word_count, .current = "" };
 }
 
 fn appendByte(storage: []u8, output_index: *usize, byte: u8) Error!void {
     if (output_index.* >= storage.len) return error.LineTooLong;
+
     storage[output_index.*] = byte;
     output_index.* += 1;
 }
 
 fn appendWord(words: [][]const u8, word_count: *usize, word: []const u8) Error!void {
     if (word_count.* >= words.len) return error.TooManyWords;
+
     words[word_count.*] = word;
     word_count.* += 1;
 }
@@ -239,6 +246,7 @@ fn attachedValue(
     current: []const u8,
 ) ?AttachedArgument {
     std.debug.assert(command < table.scopes.len);
+
     if (std.mem.startsWith(u8, current, "--")) {
         const rest = current[2..];
         const equal_index = std.mem.findScalar(u8, rest, '=') orelse return null;
@@ -247,6 +255,7 @@ fn attachedValue(
             .long,
             rest[0..equal_index],
         ) orelse return null;
+
         return switch (name.target) {
             .flag => |id| if (flagTakesValue(table.flags[id]) and !name.negated)
                 .{ .id = id, .prefix = rest[equal_index + 1 ..] }
@@ -255,10 +264,14 @@ fn attachedValue(
             .action => null,
         };
     }
+
     if (current.len < 4 or current[0] != '-') return null;
+
     const equal_index = std.mem.findScalar(u8, current, '=') orelse return null;
     if (equal_index != 2) return null;
+
     const name = findName(table.scopes[command], .short, current[1..2]) orelse return null;
+
     return switch (name.target) {
         .flag => |id| if (flagTakesValue(table.flags[id]) and !name.negated)
             .{ .id = id, .prefix = current[equal_index + 1 ..] }
@@ -277,6 +290,7 @@ fn writeScopeCandidates(
 ) Error!void {
     std.debug.assert(command < table.scopes.len);
     const scope = table.scopes[command];
+
     if (std.mem.startsWith(u8, prefix, "-")) {
         for (scope.names) |name| {
             if (name.kind == .long) {
@@ -289,6 +303,7 @@ fn writeScopeCandidates(
         }
         return;
     }
+
     if (include_commands) {
         for (scope.commands) |child| {
             if (std.mem.startsWith(u8, child.spelling, prefix)) {
@@ -296,6 +311,7 @@ fn writeScopeCandidates(
             }
         }
     }
+
     for (scope.names) |name| {
         if (name.kind == .long) {
             if (startsWithDashed(prefix, "--", name.spelling)) {
@@ -310,6 +326,7 @@ fn writeScopeCandidates(
 fn startsWithDashed(prefix: []const u8, comptime dash: []const u8, spelling: []const u8) bool {
     if (prefix.len <= dash.len) return std.mem.startsWith(u8, dash, prefix);
     if (!std.mem.startsWith(u8, prefix, dash)) return false;
+
     return std.mem.startsWith(u8, spelling, prefix[dash.len..]);
 }
 
@@ -317,6 +334,7 @@ fn findName(scope: schema.Scope, kind: schema.Name.Kind, spelling: []const u8) ?
     for (scope.names) |*name| {
         if (name.kind == kind and std.mem.eql(u8, name.spelling, spelling)) return name;
     }
+
     return null;
 }
 
@@ -335,6 +353,7 @@ fn writeEnumValues(
 ) Error!bool {
     const compiled = compile.Compiled(T);
     std.debug.assert(binding < compiled.bindings.len);
+
     return writeEnumValuesForBinding(T, T, binding, prefix, writer, compiled.table.root);
 }
 
@@ -348,6 +367,7 @@ fn writeEnumValuesForBinding(
 ) Error!bool {
     const compiled = compile.Compiled(Root);
     if (comptime compiled.bindings.len == 0) return false;
+
     const target = compiled.bindings[binding];
     if (target.command == current) {
         const info = comptime structInfo(Current);
@@ -360,21 +380,25 @@ fn writeEnumValuesForBinding(
                         try writer.writeByte('\n');
                     }
                 }
+
                 return true;
             }
         }
+
         unreachable;
     }
 
     const command_type = commandFieldType(Current) orelse return false;
     const union_type = commandUnion(command_type) orelse unreachable;
     const union_info = comptime unionInfo(union_type);
+
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         const child = comptime nodeId(Root, current, variant_name);
         if (isDescendant(compiled.nodes, target.command, child)) {
             return writeEnumValuesForBinding(Root, Variant, binding, prefix, writer, child);
         }
     }
+
     return false;
 }
 
@@ -392,6 +416,7 @@ fn enumType(comptime T: type) ?type {
 
 fn kebabStartsWith(name: []const u8, prefix: []const u8) bool {
     var prefix_index: usize = 0;
+
     for (name, 0..) |byte, index| {
         if (byte == '_') {
             if (prefix_index == prefix.len) return true;
@@ -408,6 +433,7 @@ fn kebabStartsWith(name: []const u8, prefix: []const u8) bool {
         if (prefix[prefix_index] != std.ascii.toLower(byte)) return false;
         prefix_index += 1;
     }
+
     return prefix_index == prefix.len;
 }
 
@@ -439,16 +465,19 @@ fn nodeId(
             return @intCast(index);
         }
     }
+
     unreachable;
 }
 
 fn isDescendant(nodes: []const compile.Node, command: schema.CmdId, ancestor: schema.CmdId) bool {
     var current = command;
     var remaining = nodes.len;
+
     while (remaining > 0) : (remaining -= 1) {
         if (current == ancestor) return true;
         current = nodes[current].parent orelse return false;
     }
+
     unreachable;
 }
 
@@ -537,9 +566,11 @@ test "completion scripts invoke the hidden request" {
     const Command = struct {
         pub const meta: schema.Meta(@This()) = .{ .bin = "tool" };
     };
+
     inline for (comptime @typeInfo(Shell).@"enum".field_values) |value| {
         const shell: Shell = comptime @fromBackingInt(@intCast(value));
         const script = completionScript(Command, shell);
+
         try std.testing.expect(std.mem.indexOf(u8, script, "__complete") != null);
         try std.testing.expect(std.mem.indexOf(u8, script, "tool") != null);
     }
@@ -550,5 +581,6 @@ fn expectCompletion(comptime T: type, line: []const u8, expected: []const u8) !v
     defer output.deinit();
 
     try complete(T, line, line.len, .bash, &output.writer);
+
     try std.testing.expectEqualStrings(expected, output.written());
 }

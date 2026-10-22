@@ -58,6 +58,7 @@ pub fn parse(comptime T: type, init: std.process.Init) T {
         flushBeforeExit(&stderr.interface);
         std.process.exit(2);
     };
+
     switch (handled) {
         .value => |value| return value,
         .exit => |status| {
@@ -94,11 +95,13 @@ pub fn handleCompletion(
             error.WriteFailed => return error.WriteFailed,
         }
     };
+
     return 0;
 }
 
 fn completionEnabled(comptime T: type) bool {
     if (@hasDecl(T, "meta")) return T.meta.completion;
+
     return false;
 }
 
@@ -127,14 +130,17 @@ fn parseShell(value: []const u8) ?completion.Shell {
     if (std.mem.eql(u8, value, "fish")) return .fish;
     if (std.mem.eql(u8, value, "powershell")) return .powershell;
     if (std.mem.eql(u8, value, "nu")) return .nu;
+
     return null;
 }
 
 fn parseCursor(value: []const u8) ?usize {
     if (value.len == 0) return null;
+
     for (value) |byte| {
         if (!std.ascii.isDigit(byte)) return null;
     }
+
     return std.fmt.parseInt(usize, value, 10) catch null;
 }
 
@@ -174,6 +180,7 @@ pub fn handleResult(
 
 fn argvFromWords(words: []const [:0]const u8) schema.Argv {
     if (words.len == 0) return .{};
+
     return .{
         .program = words[0],
         .values = words[1..],
@@ -184,6 +191,7 @@ fn writeOutOfMemory(io: std.Io) void {
     var stderr_buffer: [256]u8 = undefined;
     var stderr = std.Io.File.stderr().writerStreaming(io, &stderr_buffer);
     defer flushBeforeExit(&stderr.interface);
+
     stderr.interface.writeAll("error: out of memory\n") catch return;
 }
 
@@ -194,6 +202,7 @@ fn flushBeforeExit(writer: *std.Io.Writer) void {
 
 test "handleResult returns parsed value" {
     const Command = struct { verbose: bool = false };
+
     var stdout: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer stdout.deinit();
     var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
@@ -206,6 +215,7 @@ test "handleResult returns parsed value" {
         &stdout.writer,
         &stderr.writer,
     );
+
     try std.testing.expectEqual(true, result.value.verbose);
     try std.testing.expectEqualStrings("", stdout.written());
     try std.testing.expectEqualStrings("", stderr.written());
@@ -219,6 +229,7 @@ test "handleResult writes help to stdout" {
             .bin = "example",
         };
     };
+
     var stdout: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer stdout.deinit();
     var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
@@ -231,6 +242,7 @@ test "handleResult writes help to stdout" {
         &stdout.writer,
         &stderr.writer,
     );
+
     try std.testing.expectEqual(@as(u8, 0), result.exit);
     try std.testing.expectEqualStrings(
         "Usage: example [OPTIONS]\n\nOptions:\n      --verbose\n",
@@ -241,6 +253,7 @@ test "handleResult writes help to stdout" {
 
 test "handleResult writes diagnostics to stderr" {
     const Command = struct { verbose: bool = false };
+
     var stdout: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer stdout.deinit();
     var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
@@ -253,6 +266,7 @@ test "handleResult writes diagnostics to stderr" {
         &stdout.writer,
         &stderr.writer,
     );
+
     try std.testing.expectEqual(@as(u8, 2), result.exit);
     try std.testing.expectEqualStrings("", stdout.written());
     try std.testing.expectEqualStrings(
@@ -269,6 +283,7 @@ test "handleCompletion leaves __complete to disabled roots" {
             .value = .{ .positional = true },
         } };
     };
+
     var stdout: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer stdout.deinit();
     var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
@@ -280,12 +295,14 @@ test "handleCompletion leaves __complete to disabled roots" {
         &stdout.writer,
         &stderr.writer,
     ));
+
     const value = try bind.parseFrom(
         Command,
         std.testing.allocator,
         .{ .values = &.{"__complete"} },
         .{},
     );
+
     try std.testing.expectEqualStrings("__complete", value.value);
     try std.testing.expectEqualStrings("", stdout.written());
     try std.testing.expectEqualStrings("", stderr.written());
@@ -297,6 +314,7 @@ test "handleCompletion writes hidden completion candidates to stdout" {
 
         pub const meta: schema.Meta(@This()) = .{ .completion = true };
     };
+
     var stdout: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer stdout.deinit();
     var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
@@ -310,6 +328,7 @@ test "handleCompletion writes hidden completion candidates to stdout" {
         &stdout.writer,
         &stderr.writer,
     )).?;
+
     try std.testing.expectEqual(@as(u8, 0), status);
     try std.testing.expectEqualStrings("--verbose\n", stdout.written());
     try std.testing.expectEqualStrings("", stderr.written());
@@ -321,6 +340,7 @@ test "handleCompletion rejects malformed hidden requests" {
 
         pub const meta: schema.Meta(@This()) = .{ .completion = true };
     };
+
     var stdout: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer stdout.deinit();
     var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
@@ -332,6 +352,7 @@ test "handleCompletion rejects malformed hidden requests" {
         &stdout.writer,
         &stderr.writer,
     )).?;
+
     try std.testing.expectEqual(@as(u8, 2), status);
     try std.testing.expectEqualStrings("", stdout.written());
     try std.testing.expectEqualStrings("error: invalid completion request\n", stderr.written());
@@ -339,6 +360,7 @@ test "handleCompletion rejects malformed hidden requests" {
 
 test "handleCompletion leaves regular parse arguments alone" {
     const Command = struct { verbose: bool = false };
+
     var stdout: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer stdout.deinit();
     var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);

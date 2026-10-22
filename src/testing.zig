@@ -15,6 +15,7 @@ pub fn expectParse(comptime T: type, argv: schema.Argv, expected: T) !void {
     defer arena.deinit();
 
     const actual = try bind.parseFrom(T, arena.allocator(), argv, .{});
+
     try std.testing.expectEqualDeep(expected, actual);
 }
 
@@ -28,6 +29,7 @@ pub fn expectFailure(comptime T: type, argv: schema.Argv, kind: schema.Diagnosti
         errorForDiagnostic(kind),
         bind.parseFrom(T, arena.allocator(), argv, .{ .diagnostic = &diagnostic }),
     );
+
     try std.testing.expectEqual(kind, diagnostic.kind);
 }
 
@@ -124,6 +126,7 @@ test "writeHelpTree writes pages depth first" {
 
     var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer output.deinit();
+
     try writeHelpTree(App, &output.writer);
 
     const text = output.written();
@@ -131,6 +134,7 @@ test "writeHelpTree writes pages depth first" {
     const first = std.mem.indexOf(u8, text, "Usage: tool first <COMMAND>").?;
     const inner = std.mem.indexOf(u8, text, "Usage: tool first inner").?;
     const second = std.mem.indexOf(u8, text, "Usage: tool second").?;
+
     try std.testing.expect(root < first);
     try std.testing.expect(first < inner);
     try std.testing.expect(inner < second);

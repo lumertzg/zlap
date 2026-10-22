@@ -37,6 +37,7 @@ pub fn commandFieldType(comptime T: type) ?type {
     inline for (structInfo(T).field_types) |Field| {
         if (isCommandField(Field)) return Field;
     }
+
     return null;
 }
 
@@ -45,6 +46,7 @@ pub fn commandMeta(comptime T: type) schema.Meta(T) {
         const meta = T.meta;
         return meta;
     }
+
     return .{};
 }
 
@@ -53,6 +55,7 @@ pub fn variantsMeta(comptime T: type) schema.VariantsMeta(T) {
         const meta = T.meta;
         return meta;
     }
+
     return .{};
 }
 
@@ -61,6 +64,7 @@ pub fn kebabCase(comptime input: []const u8) []const u8 {
     const output = comptime blk: {
         var buffer: [length]u8 = undefined;
         var write_index: usize = 0;
+
         for (input, 0..) |byte, read_index| {
             if (byte == '_') {
                 buffer[write_index] = '-';
@@ -77,18 +81,22 @@ pub fn kebabCase(comptime input: []const u8) []const u8 {
                 write_index += 1;
             }
         }
+
         std.debug.assert(write_index == length);
         break :blk buffer;
     };
+
     return &output;
 }
 
 fn kebabCaseLength(comptime input: []const u8) usize {
     var length: usize = input.len;
+
     for (input, 0..) |byte, index| {
         if (std.ascii.isUpper(byte) and index != 0 and input[index - 1] != '_') {
             length += 1;
         }
     }
+
     return length;
 }

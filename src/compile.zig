@@ -90,6 +90,7 @@ fn TableData(comptime T: type) type {
 /// The generated tables are shared by parsers of `T` and describe every command node.
 pub fn Compiled(comptime T: type) type {
     @setEvalBranchQuota(1_000_000);
+
     validateTree(T);
     const stats = treeStats(T, 0, 0);
     validateCounts(stats);
@@ -110,6 +111,7 @@ pub fn Compiled(comptime T: type) type {
 
 fn buildScopes(comptime generated: anytype) [generated.nodes.len]schema.Scope {
     var scopes: [generated.nodes.len]schema.Scope = undefined;
+
     inline for (generated.scope_data, 0..) |scope_data, index| {
         const positional_end = scope_data.positional_start + scope_data.positional_count;
         scopes[index] = .{
@@ -121,6 +123,7 @@ fn buildScopes(comptime generated: anytype) [generated.nodes.len]schema.Scope {
             .unknown_flags = scope_data.unknown_flags,
         };
     }
+
     return scopes;
 }
 
@@ -132,6 +135,7 @@ fn buildTableData(comptime T: type) TableData(T) {
     var state: BuildCursor = .{};
     var no_globals: [0]schema.Name = .{};
     var context: BuildContext(T) = .{ .data = &data, .state = &state };
+
     buildNode(
         T,
         &context,
@@ -154,6 +158,7 @@ fn buildTableData(comptime T: type) TableData(T) {
     std.debug.assert(state.next_name <= stats.names);
     std.debug.assert(state.next_command == stats.commands);
     std.debug.assert(state.next_positional == stats.positionals);
+
     return data;
 }
 
@@ -168,6 +173,7 @@ fn buildNode(
 ) void {
     const data = context.data;
     const state = context.state;
+
     if (T == schema.ExternalCommand) {
         data.nodes[node.id] = .{
             .parent = node.parent,
@@ -187,6 +193,7 @@ fn buildNode(
         };
         return;
     }
+
     const meta = commandMeta(T);
     const name_start = state.next_name;
     const positional_start = state.next_positional;
@@ -260,6 +267,7 @@ fn buildBindings(
         const options = @field(meta.fields, field_name);
         const id: schema.FlagId = @intCast(state.next_binding);
         const field_kind = classifyField(Field);
+
         state.next_binding += 1;
         data.bindings[id] = .{
             .command = node_id,
@@ -282,6 +290,7 @@ fn buildBindings(
             appendPositional(data.positionals[0..], &state.next_positional, id);
             continue;
         }
+
         appendFieldNames(
             data.names[name_start..],
             scope_name_count,
@@ -291,6 +300,7 @@ fn buildBindings(
             id,
             true,
         );
+
         if (options.global) {
             appendFieldNames(
                 local_globals,
@@ -326,6 +336,7 @@ fn buildChildren(
     var child_globals: [global_capacity]schema.Name = undefined;
     var child_global_count: usize = 0;
     var child_ids: [variants.field_names.len]schema.CmdId = undefined;
+
     appendNamesUnlessClaimed(child_globals[0..], &child_global_count, local_globals);
     appendNamesUnlessClaimed(child_globals[0..], &child_global_count, inherited);
 
@@ -376,11 +387,13 @@ fn buildChildren(
             global_capacity,
         );
     }
+
     data.scope_data[parent.id].command_count = scope_command_count;
 }
 
 fn validateTree(comptime T: type) void {
     validateCommand(T);
+
     if (commandField(T)) |command| {
         validateVariants(command.union_type, commandMeta(T).external_subcommand);
         const variants = unionInfo(command.union_type);
@@ -428,6 +441,7 @@ fn validateCommand(comptime T: type) void {
             previous_list_max = options.max;
         }
     }
+
     if (command_count > 1) @compileError("zlap supports at most one command field per struct");
     validateSubcommandPolicies(T, command_count);
 }
@@ -435,6 +449,7 @@ fn validateCommand(comptime T: type) void {
 fn validateSubcommandPolicies(comptime T: type, comptime command_count: usize) void {
     const meta = commandMeta(T);
     const command = commandField(T);
+
     if (meta.default_subcommand != null) {
         if (command == null) {
             @compileError("zlap default_subcommand requires an optional command field");
@@ -456,12 +471,14 @@ fn validateSubcommandPolicies(comptime T: type, comptime command_count: usize) v
         }
         return;
     }
+
     if (command_count != 1 or command == null or !hasExternalVariant(command.?.union_type)) {
         @compileError("zlap external_subcommand requires one ExternalCommand variant");
     }
     if (meta.default_subcommand != null) {
         @compileError("zlap external_subcommand cannot be combined with default_subcommand");
     }
+
     const info = structInfo(T);
     inline for (info.field_names, info.field_types) |field_name, Field| {
         if (isCommandField(Field)) continue;
@@ -495,9 +512,11 @@ fn validateCommandField(
 
 fn validateVariants(comptime U: type, comptime external_subcommand: bool) void {
     const meta = variantsMeta(U);
+
     if (variantsHaveCollision(U)) {
         @compileError("zlap duplicate subcommand spelling");
     }
+
     const info = unionInfo(U);
     inline for (info.field_names, info.field_types) |field_name, Field| {
         if (isExternalVariant(Field)) {
@@ -527,15 +546,18 @@ fn variantsHaveCollision(comptime U: type) bool {
     var names: [commandNameCount(U)][]const u8 = undefined;
     var count: usize = 0;
     const info = unionInfo(U);
+
     inline for (info.field_names, info.field_types) |field_name, Field| {
         if (isExternalVariant(Field)) continue;
         const options = @field(meta.variants, field_name);
         const name = options.name orelse kebabCase(field_name);
+
         for (names[0..count]) |previous| {
             if (std.mem.eql(u8, previous, name)) return true;
         }
         names[count] = name;
         count += 1;
+
         inline for (options.aliases) |alias| {
             for (names[0..count]) |previous| {
                 if (std.mem.eql(u8, previous, alias)) return true;
@@ -544,6 +566,7 @@ fn variantsHaveCollision(comptime U: type) bool {
             count += 1;
         }
     }
+
     return false;
 }
 
@@ -555,6 +578,7 @@ fn validateField(
     comptime options: anytype,
 ) void {
     const field_kind = classifyField(Field);
+
     if (isOptionalScalar(Field)) {
         const default_value = attrs.defaultValue(Field) orelse
             @compileError("zlap optional scalar fields must default to null");
@@ -562,32 +586,41 @@ fn validateField(
             @compileError("zlap optional scalar fields must default to null");
         }
     }
+
     if (options.count) {
         if (options.positional) @compileError("zlap count fields cannot be positional");
         if (!isInteger(Field)) @compileError("zlap count requires an integer field");
     }
+
     if (options.global and options.positional) {
         @compileError("zlap global fields cannot be positional");
     }
+
     if (options.negate != null and field_kind.kind != .boolean) {
         @compileError("zlap negate requires a bool field");
     }
+
     if (options.negate != null and options.positional) {
         @compileError("zlap positional fields cannot have negate names");
     }
+
     if (options.one_of_flags) {
         validateOneOfFlags(Field, attrs, options);
     }
+
     if (options.default_missing != null and !takesValue(field_kind, options.count)) {
         @compileError("zlap default_missing requires a value-taking field");
     }
+
     if (options.require_equals and !takesValue(field_kind, options.count)) {
         @compileError("zlap require_equals requires a value-taking field");
     }
+
     if (options.env) |env| {
         if (env.len == 0) @compileError("zlap environment names cannot be empty");
         if (options.count) @compileError("zlap count fields cannot have environment fallback");
     }
+
     validateListBounds(field_kind, options);
     validateRelationships(T, field_name, options);
     if (options.positional) {
@@ -697,9 +730,11 @@ fn treeStats(comptime T: type, inherited_global_names: usize, depth: u16) Stats 
         .global_names = globalNameCount(T),
         .max_depth = depth,
     };
+
     inline for (fields.field_types) |Field| {
         if (!isCommandField(Field)) result.bindings += 1;
     }
+
     if (commandField(T)) |command| {
         const child_inherited = inherited_global_names + globalNameCount(T);
         result.commands += commandNameCount(command.union_type);
@@ -718,6 +753,7 @@ fn treeStats(comptime T: type, inherited_global_names: usize, depth: u16) Stats 
             result.max_depth = @max(result.max_depth, child.max_depth);
         }
     }
+
     return result;
 }
 
@@ -725,10 +761,12 @@ fn commandNameCount(comptime U: type) usize {
     const meta = variantsMeta(U);
     var count: usize = 0;
     const info = unionInfo(U);
+
     inline for (info.field_names, info.field_types) |field_name, Field| {
         if (isExternalVariant(Field)) continue;
         count += 1 + @field(meta.variants, field_name).aliases.len;
     }
+
     return count;
 }
 
@@ -1103,6 +1141,7 @@ test "Compiled generates leaf parser tables" {
     };
 
     const compiled = Compiled(Command);
+
     try std.testing.expectEqual(@as(usize, 1), compiled.nodes.len);
     try std.testing.expectEqual(@as(usize, 3), compiled.table.flags.len);
     try std.testing.expectEqual(@as(schema.FlagId, 2), compiled.table.scopes[0].positionals[0]);
@@ -1123,6 +1162,7 @@ test "Compiled builds a two-level command tree" {
     const Root = struct { command: Commands };
 
     const compiled = Compiled(Root);
+
     try std.testing.expectEqual(@as(usize, 2), compiled.nodes.len);
     try std.testing.expectEqual(@as(usize, 1), compiled.bindings.len);
     try std.testing.expectEqual(@as(u16, 1), compiled.max_depth);
@@ -1138,6 +1178,7 @@ test "Compiled gives reused command payloads separate nodes and bindings" {
     const Root = struct { command: Commands };
 
     const compiled = Compiled(Root);
+
     try std.testing.expectEqual(@as(usize, 3), compiled.nodes.len);
     try std.testing.expectEqual(@as(usize, 2), compiled.bindings.len);
     try std.testing.expectEqual(@as(schema.CmdId, 1), compiled.bindings[0].command);
@@ -1163,6 +1204,7 @@ test "Compiled inherits globals with nearest command shadowing" {
 
     const compiled = Compiled(Root);
     const child = compiled.table.scopes[1];
+
     try std.testing.expectEqual(schema.UnknownFlags.as_value, child.unknown_flags);
     try std.testing.expectEqual(@as(schema.FlagId, 1), child.names[0].target.flag);
     try std.testing.expectEqual(@as(usize, 2), child.names.len - 2);
@@ -1179,12 +1221,14 @@ test "Compiled inherits the root version action into subcommands" {
 
     const compiled = Compiled(Root);
     var child_has_version = false;
+
     for (compiled.table.scopes[1].names) |name| {
         switch (name.target) {
             .action => |action| child_has_version = child_has_version or action == .version,
             .flag => {},
         }
     }
+
     try std.testing.expect(child_has_version);
 }
 

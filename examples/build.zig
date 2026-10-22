@@ -47,6 +47,7 @@ fn addExample(
         }),
     });
     exe.root_module.addImport("zlap", zlap.module("zlap"));
+
     return exe;
 }
 

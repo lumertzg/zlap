@@ -17,6 +17,7 @@ zigdoc vaxis.Window
 - preferred file order: `//!` module doc comment, `const Self = @This()`, imports, `const log = std.log.scoped(...)`
 - pass allocators explicitly and use `errdefer` for cleanup on error
 - keep tests inline with the code they cover and include them from the module test entry point
+- Use a single blank line between logical steps within functions: setup, validation, loops, state updates, and final results.
 
 ## Safety
 
