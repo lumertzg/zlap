@@ -229,19 +229,19 @@ pub const Parser = struct {
                 const event = try self.positionalEvent(token, source_index);
                 return event;
             }
-            if (std.mem.eql(u8, token, "--")) {
+            if (token.len == 2 and token[0] == '-' and token[1] == '-') {
                 self.flags_stopped = true;
                 continue;
             }
-            if (std.mem.eql(u8, token, "-")) {
+            if (token.len == 1 and token[0] == '-') {
                 const event = try self.positionalEvent(token, source_index);
                 return event;
             }
-            if (std.mem.startsWith(u8, token, "--")) {
+            if (token.len > 2 and token[0] == '-' and token[1] == '-') {
                 const event = try self.longEvent(token, source_index);
                 return event;
             }
-            if (std.mem.startsWith(u8, token, "-")) {
+            if (token.len > 1 and token[0] == '-') {
                 if (isNegativeNumber(token)) {
                     if (!self.hasShort(token[1])) {
                         const event = try self.positionalEvent(token, source_index);
@@ -254,6 +254,7 @@ pub const Parser = struct {
             const event = try self.wordEvent(token, source_index);
             return event;
         }
+
         return null;
     }
 
@@ -316,11 +317,15 @@ pub const Parser = struct {
         var letter_index: usize = 1;
         var short_count: usize = 0;
         var value: []const u8 = "";
+        var first_name: *const Name = undefined;
+
         while (letter_index < token.len) : (letter_index += 1) {
             const name = self.findShort(token[letter_index]) orelse {
                 return self.unknownFlag(token, source_index);
             };
+            if (short_count == 0) first_name = name;
             short_count += 1;
+
             if (!self.nameTakesValue(name)) {
                 if (letter_index + 1 < token.len and token[letter_index + 1] == '=') {
                     return self.fail(.unexpected_value, token, source_index, nameBinding(name));
@@ -340,12 +345,15 @@ pub const Parser = struct {
             break;
         }
 
+        std.debug.assert(short_count > 0);
+
         self.short_token = token;
         self.short_count = short_count;
-        self.short_index = 0;
+        self.short_index = 1;
         self.short_value = value;
         self.short_arg_index = source_index;
-        return self.nextShortEvent();
+
+        return self.nameEvent(first_name, token, self.shortValueFor(first_name), source_index);
     }
 
     fn nextShortEvent(self: *Parser) Error!Event {
@@ -508,15 +516,25 @@ pub const Parser = struct {
 
     fn findName(self: *const Parser, kind: Name.Kind, spelling: []const u8) ?*const Name {
         for (self.currentScope().names) |*name| {
-            if (name.kind == kind and std.mem.eql(u8, name.spelling, spelling)) {
+            // Keep unequal lengths out of the general byte comparison call.
+            if (name.kind == kind and name.spelling.len == spelling.len and
+                std.mem.eql(u8, name.spelling, spelling))
+            {
                 return name;
             }
         }
+
         return null;
     }
 
     fn findShort(self: *const Parser, letter: u8) ?*const Name {
-        return self.findName(.short, &.{letter});
+        for (self.currentScope().names) |*name| {
+            if (name.kind == .short and name.spelling.len == 1 and name.spelling[0] == letter) {
+                return name;
+            }
+        }
+
+        return null;
     }
 
     fn hasShort(self: *const Parser, letter: u8) bool {
