@@ -15,6 +15,7 @@ const BindingError = ConversionError || error{ OutOfMemory, Conflict };
 pub fn defaults(comptime T: type) T {
     var value: T = undefined;
     const info = comptime structInfo(T);
+
     inline for (info.field_names, info.field_types, info.field_attrs) |field_name, Field, attrs| {
         if (attrs.defaultValue(Field)) |default_value| {
             @field(value, field_name) = default_value;
@@ -89,6 +90,7 @@ pub fn fill(
     var active_lists: ActiveLists = .{};
     defer active_lists.deinit(allocator);
     errdefer releaseActiveLists(allocator, &active_lists);
+
     try fillWithLists(T, allocator, value, argv, options, &active_lists);
 }
 
@@ -203,10 +205,12 @@ fn driveEvents(
     mode: ParseMode(T),
 ) schema.Error!void {
     var events_remaining = eventCountMax(parser.argv);
+
     while (events_remaining > 0) : (events_remaining -= 1) {
         const event = parser.next() catch |err| return context.handleParserError(diagnostic, err);
         try handleEvent(T, value, context, parser, diagnostic, mode, event orelse return);
     }
+
     std.debug.assert(false);
     return error.ParseFailed;
 }
@@ -214,6 +218,7 @@ fn driveEvents(
 fn eventCountMax(argv: schema.Argv) usize {
     // A default subcommand emits one activation before replaying its triggering word.
     var count: usize = 2;
+
     for (argv.values) |argument| {
         count +|= @max(argument.len, 1);
     }
@@ -283,8 +288,10 @@ fn finalizeFill(
     try context.failIfRecorded(diagnostic);
     try applyEnvironment(T, T, value, context, env, argv, 0, 0);
     try context.failIfRecorded(diagnostic);
+
     try checkRequired(T, &context.path, context.seen, diagnostic, argv);
     try finishActivePath(T, T, value, &context.path, context.seen, diagnostic, argv, 0, 0);
+
     try finishActiveLists(allocator, active_lists);
 }
 
@@ -301,8 +308,10 @@ fn finalizeUpdate(
 ) schema.Error!void {
     try context.failIfRecorded(diagnostic);
     try checkNewRequired(T, value, &context.path, context.seen, new_commands, diagnostic, argv);
+
     try finishActivePath(T, T, value, &context.path, context.seen, diagnostic, argv, 0, 0);
     try finishActiveLists(allocator, active_lists);
+
     commitActiveLists(allocator, active_lists);
     active_commands.commit(allocator);
 }
@@ -480,6 +489,7 @@ fn FillContext(comptime T: type) type {
                         .replace_list = !self.seen.isSet(index),
                         .list_max = compiled.table.flags[index].max,
                     };
+
                     try bindInActiveCommand(
                         T,
                         T,
@@ -491,6 +501,7 @@ fn FillContext(comptime T: type) type {
                         0,
                         0,
                     );
+
                     self.seen.set(index);
                     return;
                 }
@@ -702,6 +713,7 @@ fn activateCommand(
     std.debug.assert(compiled.nodes[target].parent.? == path.ids[path.depth]);
 
     try activateInActiveCommand(T, T, value, path, target, 0, 0);
+
     path.depth += 1;
     path.ids[path.depth] = target;
 }
@@ -733,6 +745,7 @@ fn updateCommand(
         active_commands,
         target,
     );
+
     path.depth += 1;
     path.ids[path.depth] = target;
 }
@@ -1157,6 +1170,7 @@ fn appendList(
         slot,
         isDefaultList(T, slot.*, default_value_ptr),
     );
+
     if (replace_list) list.len = 0;
     if (max) |limit| {
         if (list.len >= limit) return error.InvalidValue;
@@ -1171,6 +1185,7 @@ fn appendList(
 
     const values = activeValues(Element, list);
     try bindScalar(Element, &values[list.len], text, false, false, false);
+
     list.len += 1;
     slot.* = values[0..list.len];
 }
@@ -1208,6 +1223,7 @@ const ActiveLists = struct {
     ) error{OutOfMemory}!*ActiveList {
         const Element = @typeInfo(T).pointer.child;
         const opaque_slot: *anyopaque = @ptrCast(slot);
+
         for (self.entries.items) |*entry| {
             if (entry.id == id) {
                 std.debug.assert(entry.values != null);
@@ -1218,6 +1234,7 @@ const ActiveLists = struct {
 
         const values = try allocator.alloc(Element, 4);
         errdefer allocator.free(values);
+
         try self.entries.append(allocator, .{
             .id = id,
             .slot = opaque_slot,
@@ -1265,6 +1282,7 @@ const ActiveCommands = struct {
         slot: *T,
     ) error{OutOfMemory}!void {
         const opaque_slot: *anyopaque = @ptrCast(slot);
+
         for (self.entries.items) |entry| {
             if (entry.slot == opaque_slot) return;
         }
@@ -1272,6 +1290,7 @@ const ActiveCommands = struct {
         const snapshot = try allocator.create(T);
         errdefer allocator.destroy(snapshot);
         snapshot.* = slot.*;
+
         try self.entries.append(allocator, .{
             .slot = opaque_slot,
             .snapshot = @ptrCast(snapshot),
@@ -1498,6 +1517,7 @@ fn finishActivePath(
     if (@hasDecl(Current, "validate")) try Current.validate(value, diagnostic);
 
     if (depth == path.depth) return;
+
     const command = commandField(Current) orelse unreachable;
     const union_type = CommandUnion(command.type);
     const selected = path.ids[depth + 1];
@@ -1998,7 +2018,9 @@ test "parseFrom binds a bare struct" {
         output: []const u8 = "stdout",
     };
     const argv: schema.Argv = .{ .values = &.{ "--dry-run", "--output", "log.txt" } };
+
     const parsed = try parseFrom(Command, std.testing.allocator, argv, .{});
+
     try std.testing.expect(parsed.dry_run);
     try std.testing.expectEqualStrings("log.txt", parsed.output);
 }
@@ -2008,6 +2030,7 @@ test "parseFrom reports parser syntax and required fields" {
         input: []const u8,
     };
     var diagnostic: schema.Diagnostic = .{};
+
     try std.testing.expectError(
         error.ParseFailed,
         parseFrom(
@@ -2035,6 +2058,7 @@ test "parseFrom validates scalar values" {
         format: Format = .plain,
     };
     var diagnostic: schema.Diagnostic = .{};
+
     try std.testing.expectError(
         error.ParseFailed,
         parseFrom(
@@ -2087,6 +2111,7 @@ test "parseFrom saturates counts and collects typed lists" {
         "--names",
         "second",
     } }, .{});
+
     try std.testing.expectEqual(@as(u2, 3), parsed.verbose);
     try std.testing.expectEqualSlices(i16, &.{ -2, 4 }, parsed.numbers);
     try std.testing.expectEqualSlices(Format, &.{ .json_output, .plain }, parsed.formats);
@@ -2109,6 +2134,7 @@ test "parseFrom initializes a required count before incrementing it" {
         .{ .values = &.{"-vv"} },
         .{},
     );
+
     try std.testing.expectEqual(@as(u8, 2), parsed.verbose);
 }
 
@@ -2159,6 +2185,7 @@ test "fill releases active lists after failure" {
             .{},
         ),
     );
+
     try std.testing.expectEqualSlices(u16, &.{9}, value.values);
 }
 
@@ -2169,6 +2196,7 @@ test "actions override an earlier conversion error" {
         pub const meta: schema.Meta(@This()) = .{ .version = "1.0.0" };
     };
     var diagnostic: schema.Diagnostic = .{};
+
     try std.testing.expectError(
         error.HelpRequested,
         parseFrom(
@@ -2197,6 +2225,7 @@ test "an earlier conversion diagnostic wins over a later syntax error" {
         value: u8 = 0,
     };
     var diagnostic: schema.Diagnostic = .{};
+
     try std.testing.expectError(
         error.ParseFailed,
         parseFrom(
@@ -2248,6 +2277,7 @@ test "parseFrom applies environment fallback after argv on the active path" {
         "--address=from-argv",
         "first",
     } }, .{ .env = .{ .map = &env } });
+
     try std.testing.expectEqualStrings("from-argv", parsed.address);
     switch (parsed.command) {
         .first => |first| try std.testing.expectEqualStrings("first-env", first.value),
@@ -2264,6 +2294,7 @@ test "parseFrom enforces list bounds for named and positional lists" {
         } };
     };
     var diagnostic: schema.Diagnostic = .{};
+
     try std.testing.expectError(
         error.ParseFailed,
         parseFrom(Named, std.testing.allocator, .{}, .{ .diagnostic = &diagnostic }),
@@ -2296,6 +2327,7 @@ test "parseFrom enforces list bounds for named and positional lists" {
         .{},
     );
     defer std.testing.allocator.free(parsed.inputs);
+
     try std.testing.expectEqual(@as(usize, 2), parsed.inputs.len);
     try std.testing.expectEqualStrings("result", parsed.output);
 }
@@ -2312,6 +2344,7 @@ test "parseFrom enforces active command relationships and validation hooks" {
         } };
     };
     var diagnostic: schema.Diagnostic = .{};
+
     try std.testing.expectError(
         error.ParseFailed,
         parseFrom(
@@ -2347,6 +2380,7 @@ test "parseFrom enforces active command relationships and validation hooks" {
             return error.ParseFailed;
         }
     };
+
     try std.testing.expectError(
         error.ParseFailed,
         parseFrom(
@@ -2361,7 +2395,9 @@ test "parseFrom enforces active command relationships and validation hooks" {
 
 test "parseFrom accepts an empty command" {
     const Empty = struct {};
+
     const parsed = try parseFrom(Empty, std.testing.allocator, .{}, .{});
+
     try std.testing.expectEqual(@as(usize, 0), @sizeOf(@TypeOf(parsed)));
 }
 
@@ -2405,6 +2441,7 @@ test "parseFrom binds nested aliases, reused payloads, and inherited globals" {
         "--name",
         "release.tar",
     } }, .{});
+
     try std.testing.expectEqual(@as(u8, 2), parsed.verbose);
     const release = parsed.command orelse unreachable;
     switch (release) {
@@ -2435,6 +2472,7 @@ test "parseFrom ignores inactive required sibling fields" {
         .{ .values = &.{ "first", "--input", "source" } },
         .{},
     );
+
     const command = parsed.command orelse unreachable;
     switch (command) {
         .first => |first| try std.testing.expectEqualStrings("source", first.input),
@@ -2453,6 +2491,7 @@ test "parseFrom reports a missing required subcommand" {
         error.ParseFailed,
         parseFrom(App, std.testing.allocator, .{}, .{ .diagnostic = &diagnostic }),
     );
+
     try std.testing.expectEqual(schema.Diagnostic.Kind.missing_subcommand, diagnostic.kind);
     try std.testing.expectEqual(@as(schema.CmdId, 0), diagnostic.command);
 }
@@ -2480,6 +2519,7 @@ test "parseFrom binds optional and custom scalar fields on the active path" {
     };
 
     const empty = try parseFrom(App, std.testing.allocator, .{}, .{});
+
     try std.testing.expect(empty.delay == null);
     try std.testing.expect(empty.command == null);
 
@@ -2489,6 +2529,7 @@ test "parseFrom binds optional and custom scalar fields on the active path" {
         .{ .values = &.{ "--delay", "5", "run", "--timeout=12", "--retries", "3" } },
         .{},
     );
+
     try std.testing.expectEqual(@as(?Duration, .{ .seconds = 5 }), parsed.delay);
     const command = parsed.command orelse unreachable;
     switch (command) {
@@ -2499,6 +2540,7 @@ test "parseFrom binds optional and custom scalar fields on the active path" {
     }
 
     var diagnostic: schema.Diagnostic = .{};
+
     try std.testing.expectError(
         error.ParseFailed,
         parseFrom(
@@ -2532,6 +2574,7 @@ test "untagged unions with parseArg remain custom scalar fields" {
         .{ .values = &.{ "--timeout", "5" } },
         .{},
     );
+
     try std.testing.expectEqual(@as(u16, 5), parsed.timeout.seconds);
 
     var help: std.Io.Writer.Allocating = .init(std.testing.allocator);
@@ -2559,6 +2602,7 @@ test "parseFrom binds one_of_flags enum switches and rejects multiple selections
         .{ .values = &.{"--json-output"} },
         .{},
     );
+
     try std.testing.expectEqual(Format.json_output, parsed.format);
 
     var diagnostic: schema.Diagnostic = .{};
@@ -2645,6 +2689,7 @@ test "updateFrom releases discarded command list storage" {
         .{ .values = &.{ "second", "--values=2" } },
         .{},
     );
+
     const final_values = switch (value.command) {
         .first => unreachable,
         .second => |second| second.values,
@@ -2736,6 +2781,7 @@ test "updateFrom merges matching nested commands and replaces different variants
         .{ .values = &.{ "run", "serve", "--port", "4000" } },
         .{},
     );
+
     switch (value.command) {
         .run => |run| switch (run.task) {
             .serve => |serve| try std.testing.expectEqual(@as(u16, 4000), serve.port),
@@ -2750,6 +2796,7 @@ test "updateFrom merges matching nested commands and replaces different variants
         .{ .values = &.{ "run", "test", "--name", "smoke" } },
         .{},
     );
+
     switch (value.command) {
         .run => |run| switch (run.task) {
             .serve => unreachable,
@@ -2794,6 +2841,7 @@ test "updateFrom checks required fields only for a newly selected command" {
         .{ .values = &.{ "publish", "--input", "release.tar" } },
         .{},
     );
+
     switch (value.command) {
         .run => unreachable,
         .publish => |publish| try std.testing.expectEqualStrings("release.tar", publish.input),
@@ -2815,6 +2863,7 @@ test "updateFrom does not apply environment fallback" {
     try env.put("ZLAP_OUTPUT", "from-env");
 
     var value = defaults(Command);
+
     try updateFrom(
         Command,
         std.testing.allocator,
@@ -2822,6 +2871,7 @@ test "updateFrom does not apply environment fallback" {
         .{ .values = &.{"--verbose"} },
         .{ .env = .{ .map = &env } },
     );
+
     try std.testing.expectEqualStrings("existing", value.output);
     try std.testing.expectEqual(@as(u8, 1), value.verbose);
 }
@@ -2853,6 +2903,7 @@ test "default and external subcommands preserve routing precedence" {
         .{ .values = &.{"source.zig"} },
         .{},
     );
+
     switch (defaulted.command orelse unreachable) {
         .run => |run| try std.testing.expectEqualStrings("source.zig", run.input),
         .inspect => unreachable,
@@ -2864,6 +2915,7 @@ test "default and external subcommands preserve routing precedence" {
         .{ .values = &.{"inspect"} },
         .{},
     );
+
     switch (explicit.command orelse unreachable) {
         .run => unreachable,
         .inspect => {},
@@ -2912,6 +2964,7 @@ test "default and external subcommands preserve routing precedence" {
         .external => |external| std.testing.allocator.free(external.args),
         .run => unreachable,
     };
+
     switch (captured.command) {
         .external => |external| try std.testing.expectEqualStrings("cargo", external.args[0]),
         .run => unreachable,
@@ -2932,6 +2985,7 @@ test "default and external subcommands preserve routing precedence" {
         .{ .values = &.{ "git", "status" } },
         .{},
     );
+
     switch (captured.command) {
         .external => |external| try std.testing.expectEqualSlices(
             []const u8,

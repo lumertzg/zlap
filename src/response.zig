@@ -18,6 +18,7 @@ pub const ExpandedArgv = struct {
     /// Releases the expanded words and their backing slice.
     pub fn deinit(self: *ExpandedArgv) void {
         for (self.argv.values) |value| self.allocator.free(value);
+
         self.allocator.free(self.argv.values);
         self.* = undefined;
     }
@@ -49,6 +50,7 @@ pub fn expandResponseFiles(
     for (argv.values) |value| {
         try expandWord(allocator, io, &values, &paths, value, options, 0);
     }
+
     return .{
         .allocator = allocator,
         .argv = .{
@@ -76,12 +78,14 @@ fn expandWord(
     const canonical = try std.Io.Dir.cwd().realPathFileAlloc(io, path, allocator);
     defer allocator.free(canonical[0 .. canonical.len + 1]);
     const resolved = try allocator.dupe(u8, canonical);
+
     for (paths.items) |active| {
         if (std.mem.eql(u8, active, resolved)) {
             allocator.free(resolved);
             return error.ResponseFileCycle;
         }
     }
+
     paths.append(allocator, resolved) catch |err| {
         allocator.free(resolved);
         return err;
@@ -113,6 +117,7 @@ fn appendWord(
 ) !void {
     const owned = try allocator.dupe(u8, word);
     errdefer allocator.free(owned);
+
     try values.append(allocator, owned);
 }
 
@@ -127,6 +132,7 @@ fn readFile(
 
     const stat = try file.stat(io);
     if (stat.size > max_file_bytes) return error.ResponseFileTooLarge;
+
     const size: usize = @intCast(stat.size);
     var buffer: [4096]u8 = undefined;
     var reader = file.readerStreaming(io, &buffer);
@@ -136,6 +142,7 @@ fn readFile(
     const text = try allocator.alloc(u8, contents.len + 1);
     @memcpy(text[0..contents.len], contents);
     text[contents.len] = '\n';
+
     return text;
 }
 

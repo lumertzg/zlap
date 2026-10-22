@@ -197,6 +197,7 @@ pub const Parser = struct {
     pub fn init(table: *const Table, argv: Argv, diagnostic: *Diagnostic) Parser {
         std.debug.assert(table.root < table.scopes.len);
         std.debug.assert(argv.len() <= std.math.maxInt(u32));
+
         return .{
             .table = table,
             .argv = argv,
@@ -300,11 +301,13 @@ pub const Parser = struct {
     fn longEvent(self: *Parser, token: []const u8, source_index: u32) Error!Event {
         const spelling_and_value = token[2..];
         const equal_index = std.mem.findScalar(u8, spelling_and_value, '=');
+
         const spelling = if (equal_index) |index|
             spelling_and_value[0..index]
         else
             spelling_and_value;
         const attached_value = if (equal_index) |index| spelling_and_value[index + 1 ..] else null;
+
         const name = self.findName(.long, spelling) orelse {
             return self.unknownFlag(token, source_index);
         };
@@ -358,8 +361,10 @@ pub const Parser = struct {
 
     fn nextShortEvent(self: *Parser) Error!Event {
         std.debug.assert(self.short_index < self.short_count);
+
         const letter_index = self.short_index + 1;
         const name = self.findShort(self.short_token[letter_index]) orelse unreachable;
+
         self.short_index += 1;
         return self.nameEvent(
             name,
@@ -427,6 +432,7 @@ pub const Parser = struct {
             if (option.default_missing) |value| return value;
             return self.fail(.missing_value, token orelse "", source_index, id);
         }
+
         if (self.arg_index < self.argv.len()) {
             const candidate = self.argv.get(self.arg_index);
             if (!looksLikeFlag(candidate)) {
@@ -442,12 +448,14 @@ pub const Parser = struct {
                 return candidate;
             }
         }
+
         if (option.default_missing) |value| return value;
         return self.fail(.missing_value, token orelse "", source_index, id);
     }
 
     fn positionalEvent(self: *Parser, token: []const u8, source_index: u32) Error!Event {
         const scope = self.currentScope();
+
         while (self.positional_index < scope.positionals.len) {
             const id = scope.positionals[self.positional_index];
             const option = self.flag(id);
@@ -458,11 +466,13 @@ pub const Parser = struct {
             self.positional_index += 1;
             self.positional_count = 0;
         }
+
         if (self.positional_index >= scope.positionals.len) {
             return self.fail(.unexpected_positional, token, source_index, null);
         }
         const id = scope.positionals[self.positional_index];
         const option = self.flag(id);
+
         self.positional_started = true;
         if (option.kind != .list) {
             self.positional_index += 1;
@@ -477,6 +487,7 @@ pub const Parser = struct {
                 }
             }
         }
+
         return .{ .positional = .{ .id = id, .value = token, .arg_index = source_index } };
     }
 
@@ -495,6 +506,7 @@ pub const Parser = struct {
         binding: ?FlagId,
     ) Error {
         self.failed = true;
+
         self.diagnostic.* = .{
             .kind = kind,
             .arg_index = source_index,
@@ -585,22 +597,27 @@ fn looksLikeFlag(token: []const u8) bool {
 
 fn isNegativeNumber(token: []const u8) bool {
     if (token.len < 2 or token[0] != '-') return false;
+
     var index: usize = 1;
     var has_digits = false;
+
     while (index < token.len and std.ascii.isDigit(token[index])) : (index += 1) {}
     has_digits = index > 1;
+
     if (index < token.len and token[index] == '.') {
         index += 1;
         const decimal_start = index;
         while (index < token.len and std.ascii.isDigit(token[index])) : (index += 1) {}
         has_digits = has_digits or index != decimal_start;
     }
+
     if (!has_digits) return false;
     if (index < token.len and (token[index] == 'e' or token[index] == 'E')) {
         index += 1;
         if (index < token.len and (token[index] == '+' or token[index] == '-')) {
             index += 1;
         }
+
         const exponent_start = index;
         while (index < token.len and std.ascii.isDigit(token[index])) : (index += 1) {}
         if (index == exponent_start) return false;
@@ -635,6 +652,7 @@ pub fn Variants(comptime U: type) type {
         .@"align" = null,
         .default_value_ptr = &variant_default,
     });
+
     return @Struct(
         .auto,
         null,
@@ -691,6 +709,7 @@ pub fn Fields(comptime T: type) type {
         .@"align" = null,
         .default_value_ptr = &field_default,
     });
+
     return @Struct(.auto, null, type_info.@"struct".field_names, &field_types, &field_attributes);
 }
 
@@ -929,6 +948,7 @@ test "parser requires equals for short values" {
 
     diagnostic = .{};
     parser = Parser.init(&table, .{ .values = &.{"-o=value"} }, &diagnostic);
+
     switch ((try parser.next()).?) {
         .flag => |event| try std.testing.expectEqualStrings("value", event.value),
         else => return error.TestUnexpectedResult,
@@ -949,6 +969,7 @@ test "parser rejects flag-shaped detached values and routes pass-through flags" 
     };
     var diagnostic: Diagnostic = .{};
     var parser = Parser.init(&table, .{ .values = &.{ "--number", "-12" } }, &diagnostic);
+
     switch ((try parser.next()).?) {
         .flag => |event| {
             try std.testing.expectEqual(@as(FlagId, 1), event.id);
@@ -959,12 +980,14 @@ test "parser rejects flag-shaped detached values and routes pass-through flags" 
 
     diagnostic = .{};
     parser = Parser.init(&table, .{ .values = &.{ "--number", "--unknown" } }, &diagnostic);
+
     try std.testing.expectError(error.ParseFailed, parser.next());
     try std.testing.expectEqual(Diagnostic.Kind.missing_value, diagnostic.kind);
     try std.testing.expectEqual(@as(u32, 0), diagnostic.arg_index);
 
     diagnostic = .{};
     parser = Parser.init(&table, .{ .values = &.{"--unknown"} }, &diagnostic);
+
     switch ((try parser.next()).?) {
         .positional => |event| try std.testing.expectEqualStrings("--unknown", event.value),
         else => return error.TestUnexpectedResult,
@@ -1001,6 +1024,7 @@ test "parser emits command transitions for canonical names and aliases" {
 
     diagnostic = .{};
     parser = Parser.init(&table, .{ .values = &.{"r"} }, &diagnostic);
+
     switch ((try parser.next()).?) {
         .command => |event| try std.testing.expectEqual(@as(CmdId, 1), event.id),
         else => return error.TestUnexpectedResult,
@@ -1033,6 +1057,7 @@ test "parser stops matching commands after a positional or terminator" {
 
     diagnostic = .{};
     parser = Parser.init(&table, .{ .values = &.{ "--", "run" } }, &diagnostic);
+
     switch ((try parser.next()).?) {
         .positional => |event| try std.testing.expectEqualStrings("run", event.value),
         else => return error.TestUnexpectedResult,
@@ -1075,12 +1100,14 @@ test "parser distinguishes unknown child commands from leaf positionals" {
     };
     var diagnostic: Diagnostic = .{};
     var parser = Parser.init(&table, .{ .values = &.{"missing"} }, &diagnostic);
+
     try std.testing.expectError(error.ParseFailed, parser.next());
     try std.testing.expectEqual(Diagnostic.Kind.unknown_subcommand, diagnostic.kind);
     try std.testing.expectEqual(@as(CmdId, 0), diagnostic.command);
 
     diagnostic = .{};
     parser = Parser.init(&table, .{ .values = &.{ "run", "missing" } }, &diagnostic);
+
     switch ((try parser.next()).?) {
         .command => |event| try std.testing.expectEqual(@as(CmdId, 1), event.id),
         else => return error.TestUnexpectedResult,
@@ -1115,6 +1142,7 @@ test "parser gives declared help child precedence over synthesized help" {
 
     diagnostic = .{};
     parser = Parser.init(&table, .{ .values = &.{ "run", "help" } }, &diagnostic);
+
     switch ((try parser.next()).?) {
         .command => |event| try std.testing.expectEqual(@as(CmdId, 2), event.id),
         else => return error.TestUnexpectedResult,

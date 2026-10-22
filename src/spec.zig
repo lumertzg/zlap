@@ -8,6 +8,7 @@ const schema = @import("schema.zig");
 /// Returns a JSON description of command nodes, flags, positionals, and subcommands.
 pub fn spec(comptime T: type) []const u8 {
     _ = compile.Compiled(T);
+
     return generatedSpec(T);
 }
 
@@ -16,16 +17,20 @@ fn generatedSpec(comptime T: type) []const u8 {
     const output = comptime blk: {
         var buffer: [length]u8 = undefined;
         var writer: JsonWriter = .{ .buffer = &buffer };
+
         writeSpec(T, &writer);
         std.debug.assert(writer.index == buffer.len);
         break :blk buffer;
     };
+
     return &output;
 }
 
 fn specLength(comptime T: type) usize {
     var writer: JsonWriter = .{};
+
     writeSpec(T, &writer);
+
     return writer.index;
 }
 
@@ -37,6 +42,7 @@ const JsonWriter = struct {
         if (self.buffer) |buffer| {
             @memcpy(buffer[self.index..][0..text.len], text);
         }
+
         self.index += text.len;
     }
 
@@ -48,11 +54,13 @@ const JsonWriter = struct {
     fn number(self: *JsonWriter, value: usize) void {
         var digits: [std.fmt.count("{}", .{std.math.maxInt(usize)})]u8 = undefined;
         const text = std.mem.print(&digits, "{}", .{value}) catch unreachable;
+
         self.write(text);
     }
 
     fn string(self: *JsonWriter, value: []const u8) void {
         self.byte('"');
+
         for (value) |byte_value| switch (byte_value) {
             '"' => self.write("\\\""),
             '\\' => self.write("\\\\"),
@@ -67,12 +75,14 @@ const JsonWriter = struct {
                 self.byte(hex(byte_value & 0x0f));
             } else self.byte(byte_value),
         };
+
         self.byte('"');
     }
 };
 
 fn hex(value: u8) u8 {
     std.debug.assert(value < 16);
+
     return if (value < 10) '0' + value else 'a' + value - 10;
 }
 
@@ -81,6 +91,7 @@ fn writeSpec(comptime T: type, writer: *JsonWriter) void {
     writer.write("{\"commands\":[");
     var node_count: usize = 0;
     var next_binding: schema.FlagId = 0;
+
     writeCommand(T, T, 0, &node_count, &next_binding, writer);
     std.debug.assert(next_binding == compiled.bindings.len);
     writer.write("]}");
@@ -152,8 +163,10 @@ fn writeBindings(
     var first = true;
     var binding_id = binding_start;
     const info = structInfo(Current);
+
     inline for (info.field_names, info.field_types) |field_name, Field| {
         if (isCommandField(Field)) continue;
+
         const options = @field(meta.fields, field_name);
         if (options.positional == positional) {
             std.debug.assert(compiled.bindings[binding_id].command == node_id);
@@ -203,6 +216,7 @@ fn writeBinding(
     const compiled = compile.Compiled(Root);
     if (!first.*) writer.byte(',');
     first.* = false;
+
     writer.write("{\"id\":");
     writer.number(binding_id);
     writer.write(",\"field\":");
@@ -251,9 +265,11 @@ fn writeBinding(
 
 fn bindingCount(comptime T: type) schema.FlagId {
     var count: schema.FlagId = 0;
+
     inline for (structInfo(T).field_types) |Field| {
         if (!isCommandField(Field)) count += 1;
     }
+
     return count;
 }
 
@@ -268,6 +284,7 @@ fn writeSubcommands(
     const meta = variantsMeta(union_type);
     const union_info = unionInfo(union_type);
     var first = true;
+
     inline for (union_info.field_names, union_info.field_types) |variant_name, Variant| {
         if (isExternalVariant(Variant)) continue;
         if (!first) writer.byte(',');
@@ -296,6 +313,7 @@ fn writeDefaultSubcommand(comptime T: type, writer: *JsonWriter) void {
         writer.write("null");
         return;
     };
+
     const meta = variantsMeta(commandUnion(command_type) orelse unreachable);
     const name = @tagName(default_variant);
     writer.string(@field(meta.variants, name).name orelse kebabCase(name));
@@ -311,6 +329,7 @@ fn nodeId(
             return @intCast(index);
         }
     }
+
     unreachable;
 }
 
@@ -333,6 +352,7 @@ fn takesValue(comptime T: type, comptime options: anytype) bool {
         .optional => |optional| optional.child,
         else => T,
     };
+
     return !options.count and !options.one_of_flags and @typeInfo(Scalar) != .bool;
 }
 
@@ -370,6 +390,7 @@ test "spec emits metadata for commands, flags, and positionals" {
     };
 
     const result = comptime spec(Root);
+
     try std.testing.expect(std.mem.indexOf(u8, result, "\"commands\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, result, "\"name\":\"run\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, result, "\"long\":\"output\"") != null);
@@ -390,6 +411,7 @@ test "spec lists generated one-of switches and optional boolean switches" {
 
     const compiled = compile.Compiled(Command);
     const result = comptime spec(Command);
+
     for (compiled.table.scopes[0].names) |name| {
         const binding = switch (name.target) {
             .action => continue,
@@ -401,6 +423,7 @@ test "spec lists generated one-of switches and optional boolean switches" {
         const field = try std.mem.print(&expected, "\"long\":\"{s}\"", .{name.spelling});
         try std.testing.expect(std.mem.indexOf(u8, result, field) != null);
     }
+
     try std.testing.expect(std.mem.indexOf(u8, result, "\"long\":\"format\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, result, "\"value_name\":\"FORMAT\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, result, "\"value_name\":\"STATE\"") == null);
