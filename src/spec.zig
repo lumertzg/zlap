@@ -174,6 +174,7 @@ fn writeBindings(
                 inline for (@typeInfo(Field).@"enum".field_names) |tag_name| {
                     writeBinding(
                         Root,
+                        Current,
                         binding_id,
                         Field,
                         field_name,
@@ -187,6 +188,7 @@ fn writeBindings(
             } else {
                 writeBinding(
                     Root,
+                    Current,
                     binding_id,
                     Field,
                     field_name,
@@ -204,6 +206,7 @@ fn writeBindings(
 
 fn writeBinding(
     comptime Root: type,
+    comptime Current: type,
     binding_id: schema.FlagId,
     comptime Field: type,
     comptime field_name: []const u8,
@@ -223,6 +226,29 @@ fn writeBinding(
     writer.string(field_name);
     writer.write(",\"kind\":");
     writer.string(@tagName(compiled.table.flags[binding_id].kind));
+    writer.write(",\"required\":");
+    writer.write(if (isRequired(Current, field_name)) "true" else "false");
+    writer.write(",\"env\":");
+    if (options.env) |env| writer.string(env) else writer.write("null");
+    writer.write(",\"choices\":");
+    writeEnumChoices(Field, writer);
+    writer.write(",\"min\":");
+    if (options.min) |min| writer.number(min) else writer.write("null");
+    writer.write(",\"max\":");
+    if (options.max) |max| writer.number(max) else writer.write("null");
+    writer.write(",\"default_missing\":");
+    if (options.default_missing) |default_missing| {
+        writer.string(default_missing);
+    } else writer.write("null");
+    writer.write(",\"require_equals\":");
+    writer.write(if (options.require_equals) "true" else "false");
+    writer.write(",\"allow_hyphen_values\":");
+    writer.write(if (options.allow_hyphen_values) "true" else "false");
+    writer.write(",\"conflicts\":[");
+    writeRelationships(options.conflicts, writer);
+    writer.write("],\"requires\":[");
+    writeRelationships(options.requires, writer);
+    writer.byte(']');
     if (options.one_of_flags) {
         writer.write(",\"takes_value\":false");
         writer.write(",\"value\":");
@@ -261,6 +287,46 @@ fn writeBinding(
         writer.write(if (options.global) "true" else "false");
     }
     writer.byte('}');
+}
+
+/// Required mirrors bind.checkRequiredInCommand: only fields without declaration
+/// defaults must be seen, regardless of their type or parser value rules.
+fn isRequired(comptime T: type, comptime field_name: []const u8) bool {
+    inline for (structInfo(T).field_names, structInfo(T).field_attrs) |name, attrs| {
+        if (comptime std.mem.eql(u8, name, field_name)) return attrs.default_value_ptr == null;
+    }
+
+    unreachable;
+}
+
+fn writeEnumChoices(comptime T: type, writer: *JsonWriter) void {
+    const enum_type = enumType(T) orelse {
+        writer.write("null");
+        return;
+    };
+
+    writer.byte('[');
+    inline for (@typeInfo(enum_type).@"enum".field_names, 0..) |name, index| {
+        if (index != 0) writer.byte(',');
+        writer.string(kebabCase(name));
+    }
+    writer.byte(']');
+}
+
+fn enumType(comptime T: type) ?type {
+    return switch (@typeInfo(T)) {
+        .@"enum" => T,
+        .optional => |optional| enumType(optional.child),
+        .pointer => |pointer| if (pointer.size == .slice) enumType(pointer.child) else null,
+        else => null,
+    };
+}
+
+fn writeRelationships(comptime targets: anytype, writer: *JsonWriter) void {
+    inline for (targets, 0..) |target, index| {
+        if (index != 0) writer.byte(',');
+        writer.string(@tagName(target));
+    }
 }
 
 fn bindingCount(comptime T: type) schema.FlagId {
@@ -458,4 +524,100 @@ test "spec describes default and external subcommands" {
         comptime spec(ExternalApp),
         "\"external_subcommand\":true",
     ) != null);
+}
+
+test "spec exports binding semantics as parsed JSON" {
+    const Format = enum { json_output, plain_text };
+    const Command = struct {
+        input: []const u8,
+        format: ?Format = null,
+        labels: []const Format = &.{},
+        output_path: []const u8 = "",
+        depends_on: bool = false,
+        pub const meta: schema.Meta(@This()) = .{ .fields = .{
+            .input = .{
+                .positional = true,
+                .value_name = "INPUT\nPATH",
+                .help = "Required \"input\"",
+            },
+            .format = .{ .long = "selected-format", .env = "ZLAP_FORMAT" },
+            .labels = .{ .min = 1, .max = 3 },
+            .output_path = .{
+                .long = "output-file",
+                .default_missing = "stdout\nstream",
+                .require_equals = true,
+                .allow_hyphen_values = true,
+                .conflicts = &.{.depends_on},
+                .requires = &.{.format},
+            },
+            .depends_on = .{ .long = "dependency" },
+        } };
+    };
+    const Binding = struct {
+        field: []const u8,
+        help: []const u8,
+        name: ?[]const u8 = null,
+        long: ?[]const u8 = null,
+        required: bool,
+        env: ?[]const u8,
+        choices: ?[]const []const u8,
+        min: ?u32,
+        max: ?u32,
+        default_missing: ?[]const u8,
+        require_equals: bool,
+        allow_hyphen_values: bool,
+        conflicts: []const []const u8,
+        requires: []const []const u8,
+    };
+    const CommandSpec = struct { flags: []const Binding, positionals: []const Binding };
+    const Spec = struct { commands: []const CommandSpec };
+
+    const document = comptime spec(Command);
+    var parsed = try std.json.parseFromSlice(Spec, std.testing.allocator, document, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    const command = parsed.value.commands[0];
+    const input = findBinding(Binding, command.positionals, "input");
+    try std.testing.expect(input.required);
+    try std.testing.expectEqualStrings("INPUT\nPATH", input.name orelse "");
+    try std.testing.expectEqualStrings("Required \"input\"", input.help);
+    try std.testing.expect(input.env == null);
+    try std.testing.expect(input.choices == null);
+
+    const format = findBinding(Binding, command.flags, "format");
+    try std.testing.expect(!format.required);
+    try std.testing.expectEqualStrings("selected-format", format.long orelse "");
+    try std.testing.expectEqualStrings("ZLAP_FORMAT", format.env orelse "");
+    try expectChoices(format.choices, &.{ "json-output", "plain-text" });
+
+    const labels = findBinding(Binding, command.flags, "labels");
+    try std.testing.expectEqual(@as(?u32, 1), labels.min);
+    try std.testing.expectEqual(@as(?u32, 3), labels.max);
+    try expectChoices(labels.choices, &.{ "json-output", "plain-text" });
+
+    const output = findBinding(Binding, command.flags, "output_path");
+    try std.testing.expect(!output.required);
+    try std.testing.expectEqualStrings("stdout\nstream", output.default_missing orelse "");
+    try std.testing.expect(output.require_equals);
+    try std.testing.expect(output.allow_hyphen_values);
+    try std.testing.expectEqualStrings("depends_on", output.conflicts[0]);
+    try std.testing.expectEqualStrings("format", output.requires[0]);
+}
+
+fn findBinding(comptime Item: type, bindings: []const Item, comptime field_name: []const u8) Item {
+    for (bindings) |item| {
+        if (std.mem.eql(u8, item.field, field_name)) return item;
+    }
+
+    unreachable;
+}
+
+fn expectChoices(actual: ?[]const []const u8, expected: []const []const u8) !void {
+    const choices = actual orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(expected.len, choices.len);
+    for (choices, expected) |choice, expected_choice| {
+        try std.testing.expectEqualStrings(expected_choice, choice);
+    }
 }
