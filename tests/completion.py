@@ -82,7 +82,7 @@ class CompletionTests(unittest.TestCase):
         sources = "; ".join(f"source {shlex.quote(str(path))}" for path in paths)
         if shell == "zsh":
             setup = (
-                "autoload -Uz compinit; compinit -D; " + sources + "; "
+                "autoload -Uz compinit; compinit -i -D; " + sources + "; "
                 "zlap_capture() { printf '\\nZLAP_RESULT:%s\\n' \"$BUFFER\"; "
                 "BUFFER=''; zle reset-prompt; }; "
                 "zle -N zlap_capture; bindkey '^X' zlap_capture"
@@ -184,6 +184,21 @@ class CompletionTests(unittest.TestCase):
             ("zlap-fixture --output ", []),
             ("zlap-fixture -- j", ["json"]),
             ("zlap-other --format pl", ["plain"]),
+        ]:
+            with self.subTest(line=line):
+                command = sources + "; complete -C " + shlex.quote(line)
+                output = self.run_shell([executable, "--no-config", "-c", command])
+                self.assertEqual(output.splitlines(), expected)
+
+    def test_fish_quoted_executable_names(self):
+        executable = self.shell("fish")
+        probe = "complete -c " + shlex.quote("zlap'fixture") + " -f -a plain; complete -C "
+        probe += shlex.quote('"zlap\'fixture" pl')
+        if self.run_shell([executable, "--no-config", "-c", probe]).splitlines() != ["plain"]:
+            self.skipTest("This Fish version cannot dispatch completions for quoted executable names")
+
+        sources = "; ".join(f"source {shlex.quote(str(p))}" for p in self.scripts["fish"])
+        for line, expected in [
             ("\"zlap'fixture\" --format pl", ["plain"]),
             ("'zlap\"fixture' --format pl", ["plain"]),
         ]:
