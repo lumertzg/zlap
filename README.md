@@ -70,8 +70,31 @@ lists with the supplied allocator, and callers free populated slices with it.
 and `complete` support Bash, Zsh, Fish, PowerShell, and Nushell. `spec` returns a
 compile-time JSON description of the command tree.
 
+Unknown flags and commands can include a typo suggestion. Suggestions only consider
+names accepted in the failing command's scope, including aliases and global flags.
+
+### Shell completion
+
+Enable `.completion = true` with `parse`, then source `completionScript(App, shell)`
+output. Completes flags, subcommands, and enum values. Zsh needs `compinit`,
+PowerShell needs version 7, and Nushell needs 0.116+.
+
+### JSON command specification
+
+`spec(App)` returns compile-time JSON with command names, help, enum choices,
+environment bindings, and validation rules. Relationships reference source field names.
+
 ## Test
 
 ```sh
 zig build test
 ```
+
+Real-shell integration tests run against installed Bash, Zsh, Fish, PowerShell, and
+Nushell runtimes:
+
+```sh
+python3 tests/completion.py
+```
+
+Missing shells are skipped locally. CI uses `--require-all` to require all five.

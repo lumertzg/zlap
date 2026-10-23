@@ -86,7 +86,11 @@ pub fn handleCompletion(
         return 2;
     };
 
-    completion.complete(T, request.line, request.cursor, request.shell, stdout) catch |err| {
+    const result = if (request.words) |words|
+        completion.completeWords(T, words[0 .. words.len - 1], words[words.len - 1], stdout)
+    else
+        completion.complete(T, request.line, request.cursor, request.shell, stdout);
+    result catch |err| {
         switch (err) {
             error.CursorOutOfBounds, error.LineTooLong, error.TooManyWords => {
                 try writeInvalidCompletionRequest(stderr);
@@ -107,20 +111,31 @@ fn completionEnabled(comptime T: type) bool {
 
 const CompletionRequest = struct {
     shell: completion.Shell,
-    line: []const u8,
-    cursor: usize,
+    line: []const u8 = "",
+    cursor: usize = 0,
+    words: ?[]const []const u8 = null,
 };
 
 fn completionRequest(argv: schema.Argv) ?CompletionRequest {
-    if (argv.len() != 7) return null;
+    if (argv.len() < 5) return null;
     if (!std.mem.eql(u8, argv.get(1), "--shell")) return null;
+    const shell = parseShell(argv.get(2)) orelse return null;
+    if (std.mem.eql(u8, argv.get(3), "--words")) {
+        if (argv.len() < 6) return null;
+        return .{ .shell = shell, .words = argv.values[4..] };
+    }
+
     if (!std.mem.eql(u8, argv.get(3), "--line")) return null;
-    if (!std.mem.eql(u8, argv.get(5), "--cursor")) return null;
+    if (argv.len() != 5 and argv.len() != 7) return null;
+    if (argv.len() == 7 and !std.mem.eql(u8, argv.get(5), "--cursor")) return null;
 
     return .{
-        .shell = parseShell(argv.get(2)) orelse return null,
+        .shell = shell,
         .line = argv.get(4),
-        .cursor = parseCursor(argv.get(6)) orelse return null,
+        .cursor = if (argv.len() == 7)
+            parseCursor(argv.get(6)) orelse return null
+        else
+            argv.get(4).len,
     };
 }
 

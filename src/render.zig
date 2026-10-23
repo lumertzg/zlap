@@ -47,8 +47,14 @@ pub fn renderDiagnostic(
     try writer.writeAll("error: ");
     switch (diagnostic.kind) {
         .none => try writer.writeAll("unknown error"),
-        .unknown_flag => try writer.print("unknown flag '{s}'", .{diagnostic.token}),
-        .unknown_subcommand => try writer.print("unknown command '{s}'", .{diagnostic.token}),
+        .unknown_flag => {
+            try writer.print("unknown flag '{s}'", .{diagnostic.token});
+            try writeSuggestion(compiled.table.scopes[diagnostic.command], diagnostic, writer);
+        },
+        .unknown_subcommand => {
+            try writer.print("unknown command '{s}'", .{diagnostic.token});
+            try writeSuggestion(compiled.table.scopes[diagnostic.command], diagnostic, writer);
+        },
         .missing_value => try writeBindingProblem(T, diagnostic, writer, "requires a value"),
         .unexpected_value => try writeUnexpectedValue(T, diagnostic, writer),
         .unexpected_positional => try writeUnexpectedPositional(diagnostic, writer),
@@ -62,6 +68,113 @@ pub fn renderDiagnostic(
     }
 
     try writer.writeAll("\n\nFor more information, try '--help'.\n");
+}
+
+fn writeSuggestion(
+    scope: schema.Scope,
+    diagnostic: schema.Diagnostic,
+    writer: *std.Io.Writer,
+) std.Io.Writer.Error!void {
+    const suggestion = switch (diagnostic.kind) {
+        .unknown_flag => findFlagSuggestion(scope.names, diagnostic.token),
+        .unknown_subcommand => findSuggestion(scope.commands, diagnostic.token),
+        else => unreachable,
+    } orelse return;
+
+    const prefix: []const u8 = switch (diagnostic.kind) {
+        .unknown_flag => if (diagnostic.token.len > 1 and diagnostic.token[1] == '-') "--" else "-",
+        .unknown_subcommand => "",
+        else => unreachable,
+    };
+    try writer.print("\n\nDid you mean '{s}{s}'?", .{ prefix, suggestion });
+}
+
+fn findFlagSuggestion(names: []const schema.Name, token: []const u8) ?[]const u8 {
+    const is_long = token.len > 1 and token[1] == '-';
+    const spelling_start: usize = if (is_long) 2 else 1;
+    if (token.len <= spelling_start) return null;
+
+    const spelling_and_value = token[spelling_start..];
+    const spelling = if (std.mem.findScalar(u8, spelling_and_value, '=')) |index|
+        spelling_and_value[0..index]
+    else
+        spelling_and_value;
+
+    var candidate: ?[]const u8 = null;
+    var best_distance: ?u8 = null;
+    for (names) |name| {
+        if ((name.kind == .long) != is_long) continue;
+        considerSuggestion(spelling, name.spelling, &candidate, &best_distance);
+    }
+    return candidate;
+}
+
+fn findSuggestion(commands: []const schema.Command, token: []const u8) ?[]const u8 {
+    var candidate: ?[]const u8 = null;
+    var best_distance: ?u8 = null;
+    for (commands) |command| {
+        considerSuggestion(token, command.spelling, &candidate, &best_distance);
+    }
+    return candidate;
+}
+
+fn considerSuggestion(
+    input: []const u8,
+    spelling: []const u8,
+    candidate: *?[]const u8,
+    best_distance: *?u8,
+) void {
+    const distance = boundedEditDistance(input, spelling) orelse return;
+    const maximum = maximumSuggestionDistance(input.len);
+    if (distance > maximum) return;
+
+    if (best_distance.*) |best| {
+        if (distance > best) return;
+        if (distance == best) {
+            candidate.* = null;
+            return;
+        }
+    }
+    candidate.* = spelling;
+    best_distance.* = distance;
+}
+
+fn maximumSuggestionDistance(length: usize) u8 {
+    return if (length <= 4) 1 else 2;
+}
+
+fn boundedEditDistance(input: []const u8, spelling: []const u8) ?u8 {
+    const max_length = 32;
+    if (input.len > max_length or spelling.len > max_length) return null;
+
+    var previous_previous: [max_length + 1]u8 = undefined;
+    var previous: [max_length + 1]u8 = undefined;
+    var current: [max_length + 1]u8 = undefined;
+    for (0..spelling.len + 1) |index| previous[index] = @intCast(index);
+
+    for (input, 1..) |input_byte, input_index| {
+        current[0] = @intCast(input_index);
+        for (spelling, 1..) |spelling_byte, spelling_index| {
+            const substitution = previous[spelling_index - 1] +
+                @intFromBool(input_byte != spelling_byte);
+            const insertion = current[spelling_index - 1] + 1;
+            const deletion = previous[spelling_index] + 1;
+            current[spelling_index] = @min(substitution, insertion, deletion);
+
+            if (input_index > 1 and spelling_index > 1 and
+                input_byte == spelling[spelling_index - 2] and
+                input[input_index - 2] == spelling_byte)
+            {
+                current[spelling_index] = @min(
+                    current[spelling_index],
+                    previous_previous[spelling_index - 2] + 1,
+                );
+            }
+        }
+        previous_previous = previous;
+        previous = current;
+    }
+    return previous[spelling.len];
 }
 
 fn writeHelpForNode(
@@ -824,6 +937,148 @@ test "renderDiagnostic names the failed binding" {
 
     try std.testing.expectEqualStrings(
         "error: option '--output' requires a value\n\nFor more information, try '--help'.\n",
+        output.written(),
+    );
+}
+
+test "renderDiagnostic suggests transposed command and flag names" {
+    const Commands = union(enum) { publish: struct {} };
+    const App = struct {
+        verbose: bool = false,
+        command: ?Commands = null,
+
+        pub const meta: schema.Meta(@This()) = .{};
+    };
+
+    var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+
+    try renderDiagnostic(
+        App,
+        .{ .kind = .unknown_flag, .token = "--verobse" },
+        &output.writer,
+        .{},
+    );
+    try std.testing.expectEqualStrings(
+        "error: unknown flag '--verobse'\n\nDid you mean '--verbose'?\n\n" ++
+            "For more information, try '--help'.\n",
+        output.written(),
+    );
+
+    output.clearRetainingCapacity();
+    try renderDiagnostic(
+        App,
+        .{ .kind = .unknown_subcommand, .token = "publsih" },
+        &output.writer,
+        .{},
+    );
+    try std.testing.expectEqualStrings(
+        "error: unknown command 'publsih'\n\nDid you mean 'publish'?\n\n" ++
+            "For more information, try '--help'.\n",
+        output.written(),
+    );
+}
+
+test "renderDiagnostic suggestions use the active command scope" {
+    const Alpha = struct { alpha_only: bool = false };
+    const Beta = struct { beta_only: bool = false };
+    const Commands = union(enum) { alpha: Alpha, beta: Beta };
+    const App = struct {
+        root_only: bool = false,
+        command: ?Commands = null,
+    };
+
+    var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+
+    try renderDiagnostic(
+        App,
+        .{ .kind = .unknown_flag, .command = 1, .token = "--beta-onyl" },
+        &output.writer,
+        .{},
+    );
+    try std.testing.expectEqualStrings(
+        "error: unknown flag '--beta-onyl'\n\nFor more information, try '--help'.\n",
+        output.written(),
+    );
+
+    output.clearRetainingCapacity();
+    try renderDiagnostic(
+        App,
+        .{ .kind = .unknown_flag, .command = 1, .token = "--root-onyl" },
+        &output.writer,
+        .{},
+    );
+    try std.testing.expectEqualStrings(
+        "error: unknown flag '--root-onyl'\n\nFor more information, try '--help'.\n",
+        output.written(),
+    );
+}
+
+test "renderDiagnostic suggests aliases, negations, and inherited globals" {
+    const Run = struct {
+        enabled: bool = false,
+        pub const meta: schema.Meta(@This()) = .{ .fields = .{
+            .enabled = .{ .negate = "no-enabled" },
+        } };
+    };
+    const Commands = union(enum) { run: Run };
+    const App = struct {
+        verbose: bool = false,
+        command: ?Commands = null,
+
+        pub const meta: schema.Meta(@This()) = .{ .fields = .{
+            .verbose = .{ .aliases = &.{"chatty"}, .global = true },
+        } };
+    };
+
+    var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+
+    try renderDiagnostic(
+        App,
+        .{ .kind = .unknown_flag, .command = 1, .token = "--chatt" },
+        &output.writer,
+        .{},
+    );
+    try std.testing.expectEqualStrings(
+        "error: unknown flag '--chatt'\n\nDid you mean '--chatty'?\n\n" ++
+            "For more information, try '--help'.\n",
+        output.written(),
+    );
+
+    output.clearRetainingCapacity();
+    try renderDiagnostic(
+        App,
+        .{ .kind = .unknown_flag, .command = 1, .token = "--no-enabld" },
+        &output.writer,
+        .{},
+    );
+    try std.testing.expectEqualStrings(
+        "error: unknown flag '--no-enabld'\n\nDid you mean '--no-enabled'?\n\n" ++
+            "For more information, try '--help'.\n",
+        output.written(),
+    );
+}
+
+test "renderDiagnostic rejects unrelated names" {
+    const Commands = union(enum) { publish: struct {} };
+    const App = struct {
+        unused: bool = false,
+        command: ?Commands = null,
+    };
+
+    var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+
+    try renderDiagnostic(
+        App,
+        .{ .kind = .unknown_subcommand, .token = "unrelated" },
+        &output.writer,
+        .{},
+    );
+    try std.testing.expectEqualStrings(
+        "error: unknown command 'unrelated'\n\nFor more information, try '--help'.\n",
         output.written(),
     );
 }
