@@ -75,28 +75,14 @@ names accepted in the failing command's scope, including aliases and global flag
 
 ### Shell completion
 
-Set `.completion = true` in the root command's metadata when using `parse`. Emit
-`completionScript(App, shell)` from your application's completion-install command,
-then source that output in the corresponding shell. Initialize Zsh's completion
-system with `compinit` first. Nushell scripts use command-wide completers and require
-Nushell 0.116 or newer. PowerShell scripts target PowerShell 7.
-
-Completion suggests flags, subcommands, and enum values for flags and positionals,
-including positional values after `--`. Attached values retain their flag prefix,
-so `complete` returns `--format=plain` for `--format=pl`. The shell adapters handle
-insertion quoting and cursor units. The direct `complete` API takes a byte-offset
-cursor and does not evaluate shell expansions or provide filesystem candidates.
-Shells may supply their own filesystem fallback for unconstrained values.
+Enable `.completion = true` with `parse`, then source `completionScript(App, shell)`
+output. Completes flags, subcommands, and enum values. Zsh needs `compinit`,
+PowerShell needs version 7, and Nushell needs 0.116+.
 
 ### JSON command specification
 
-`spec(App)` returns JSON at compile time. Each binding includes `required`, `env`,
-`choices`, list `min`/`max`, `default_missing`, `require_equals`,
-`allow_hyphen_values`, and `conflicts`/`requires`, alongside its names and help.
-`required` means the field has no declaration default. Environment values can still
-satisfy it. `choices` is null for non-enum fields. Relationships use the target's
-`field` name in the same command, independently of CLI renames or display labels.
-One-of switches retain their shared binding ID and fixed `value`.
+`spec(App)` returns compile-time JSON with command names, help, enum choices,
+environment bindings, and validation rules. Relationships reference source field names.
 
 ## Test
 
